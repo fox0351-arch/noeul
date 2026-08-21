@@ -19,3 +19,25 @@ export interface PlacesSearchResponse {
   center: PlaceLocation;
   places: PlaceItem[];
 }
+
+export interface PlaceReview {
+  author: string;
+  rating?: number;
+  text: string;
+  relativeTime?: string;
+}
+
+export interface PlaceDetails {
+  id: string;
+  name: string;
+  address: string;
+  rating?: number;
+  userRatingCount?: number;
+  description?: string;
+  photoUrl?: string;
+  openingHours: string[];
+  phone?: string;
+  website?: string;
+  reviews: PlaceReview[];
+  blogSummary: string;
+}

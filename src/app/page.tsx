@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { PlaceItem, PlaceLocation, PlacesSearchResponse } from '@/types/place';
+import { PlaceDetails, PlaceItem, PlaceLocation, PlacesSearchResponse } from '@/types/place';
 import { generateKML, downloadKmlFile } from '@/lib/kmlBuilder';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
 import { createTravelMapId, deleteTravelMap, loadTravelMaps, saveTravelMap, updateTravelMap } from '@/lib/travelMapStorage';
 import { TravelMap } from '@/types/travelMap';
 import GoogleMapViewer from '@/components/GoogleMapViewer';
+import PlaceDetailCard from '@/components/PlaceDetailCard';
 
 export default function HomePage() {
   const [keyword, setKeyword] = useState('');
@@ -33,6 +34,9 @@ export default function HomePage() {
   const [placeListToggledByUser, setPlaceListToggledByUser] = useState(false);
   const placeListSectionRef = useRef<HTMLDivElement>(null);
   const shouldScrollToPlaceList = useRef(false);
+  const [placeDetails, setPlaceDetails] = useState<PlaceDetails | null>(null);
+  const [isDetailsLoading, setIsDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState('');
 
   const displayedPlaces = useMemo(() => {
     if (hideManualExtras) {
@@ -48,6 +52,11 @@ export default function HomePage() {
     const extras = manualPlaces.filter((place) => !seen.has(place.id));
     return [...fromSearchOrList, ...extras];
   }, [places, manualPlaces, hideManualExtras]);
+
+  const selectedPlace = useMemo(
+    () => displayedPlaces.find((place) => place.id === selectedPlaceId) ?? null,
+    [displayedPlaces, selectedPlaceId]
+  );
 
   useEffect(() => {
     setManualPlaces(loadManualPlaces());
@@ -75,6 +84,42 @@ export default function HomePage() {
     shouldScrollToPlaceList.current = false;
     placeListSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [places]);
+
+  useEffect(() => {
+    if (!selectedPlaceId) {
+      setPlaceDetails(null);
+      setDetailsError('');
+      setIsDetailsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsDetailsLoading(true);
+    setDetailsError('');
+    setPlaceDetails(null);
+
+    fetch(`/api/places/details?id=${encodeURIComponent(selectedPlaceId)}`)
+      .then(async (res) => {
+        const data: PlaceDetails & { error?: string } = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || '상세 정보를 불러올 수 없습니다.');
+        }
+        return data;
+      })
+      .then((data) => {
+        if (!cancelled) setPlaceDetails(data);
+      })
+      .catch((err: any) => {
+        if (!cancelled) setDetailsError(err.message || '상세 정보를 불러올 수 없습니다.');
+      })
+      .finally(() => {
+        if (!cancelled) setIsDetailsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPlaceId]);
 
   const handleTogglePlaceList = () => {
     if (!window.matchMedia('(max-width: 767px)').matches) return;
@@ -491,6 +536,15 @@ export default function HomePage() {
             )}
           </div>
       </div>
+      {selectedPlace && (
+        <PlaceDetailCard
+          place={selectedPlace}
+          details={placeDetails}
+          isLoading={isDetailsLoading}
+          error={detailsError}
+          onClose={() => setSelectedPlaceId(null)}
+        />
+      )}
     </main>
   );
 }
