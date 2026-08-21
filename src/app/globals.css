@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.place-field {
+  color: #111111;
+  min-height: 44px;
+  font-size: 16px;
+}
+
+.place-field::placeholder {
+  color: #737373;
+  opacity: 1;
+}
+
+.map-pane {
+  min-height: 42vh;
+}
+
+.workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #ffffff;
+}
+
+.workspace-places {
+  scroll-margin-top: 8px;
+}
+
+.workspace-search,
+.workspace-add,
+.workspace-places {
+  background: #ffffff;
+}
+
+@media (min-width: 768px) {
+  .place-field {
+    min-height: 38px;
+    font-size: 14px;
+  }
+
+  .map-pane {
+    min-height: 0;
+  }
+
+  .workspace {
+    display: grid;
+    grid-template-columns: 380px minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr) minmax(0, 42%);
+    overflow: hidden;
+  }
+
+  .workspace-search {
+    grid-column: 1;
+    grid-row: 1;
+    border-right: 1px solid #e2e8f0;
+  }
+
+  .workspace-add {
+    grid-column: 1;
+    grid-row: 2;
+    border-right: 1px solid #e2e8f0;
+  }
+
+  .workspace-places {
+    grid-column: 1;
+    grid-row: 3;
+    min-height: 0;
+    overflow: auto;
+    border-right: 1px solid #e2e8f0;
+  }
+
+  .workspace-saved {
+    grid-column: 1;
+    grid-row: 4;
+    min-height: 0;
+    overflow: auto;
+    border-right: 1px solid #e2e8f0;
+  }
+
+  .workspace-map {
+    grid-column: 2;
+    grid-row: 1 / span 4;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .map-pane > div {
+    min-height: 100% !important;
+    height: 100%;
+  }
+
+  .place-list-toggle {
+    min-height: 44px;
+  }
+}
