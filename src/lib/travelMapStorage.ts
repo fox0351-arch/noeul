@@ -16,7 +16,8 @@ function isPlaceItem(value: unknown): value is PlaceItem {
     typeof place.name === 'string' &&
     typeof place.address === 'string' &&
     typeof place.location?.latitude === 'number' &&
-    typeof place.location?.longitude === 'number'
+    typeof place.location?.longitude === 'number' &&
+    (place.memo === undefined || typeof place.memo === 'string')
   );
 }
 

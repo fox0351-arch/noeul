@@ -3,11 +3,15 @@ import { PlaceItem } from '@/types/place';
 export function generateKML(mapTitle: string, places: PlaceItem[]): string {
   const placemarks = places
     .map((place) => {
+      const memoHtml = place.memo?.trim()
+        ? `<p><strong>메모:</strong> ${escapeXml(place.memo.trim()).replace(/\n/g, '<br/>')}</p>`
+        : '';
       const description = `
         <![CDATA[
           <h3>${place.name}</h3>
           <p><strong>주소:</strong> ${place.address}</p>
           <p><strong>평점:</strong> ★ ${place.rating ?? '정보 없음'}</p>
+          ${memoHtml}
         ]]>
       `.trim();
 

@@ -12,6 +12,8 @@ export interface PlaceItem {
   types?: string[];
   /** true면 검색이 아니라 사용자가 직접 추가한 장소 (주황 표시) */
   addedManually?: boolean;
+  /** 사용자가 장소마다 남긴 메모 */
+  memo?: string;
 }
 
 export interface PlacesSearchResponse {

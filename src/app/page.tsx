@@ -37,7 +37,7 @@ export default function HomePage() {
   const shouldScrollToPlaceList = useRef(false);
   const [placeDetails, setPlaceDetails] = useState<PlaceDetails | null>(null);
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
-  const [detailsError, setDetailsError] = useState('');
+  const [memoOpenPlaceId, setMemoOpenPlaceId] = useState<string | null>(null);
 
   const displayedPlaces = useMemo(() => {
     if (hideManualExtras) {
@@ -47,7 +47,7 @@ export default function HomePage() {
     const savedById = new Map(manualPlaces.map((place) => [place.id, place]));
     const fromSearchOrList = places.map((place) => {
       const saved = savedById.get(place.id);
-      return saved ? { ...place, addedManually: true } : place;
+      return saved ? { ...place, addedManually: true, memo: place.memo ?? saved.memo } : place;
     });
     const seen = new Set(fromSearchOrList.map((place) => place.id));
     const extras = manualPlaces.filter((place) => !seen.has(place.id));
@@ -241,10 +241,26 @@ export default function HomePage() {
     persistLoadedMapPlaces(nextPlaces);
   };
 
+  const handleTogglePlaceMemo = (placeId: string) => {
+    setMemoOpenPlaceId((current) => (current === placeId ? null : placeId));
+  };
+
+  const handleChangePlaceMemo = (placeId: string, memo: string) => {
+    const nextPlaces = displayedPlaces.map((place) =>
+      place.id === placeId ? { ...place, memo } : place
+    );
+    setPlaces(nextPlaces);
+    setManualPlaces((prev) =>
+      prev.map((place) => (place.id === placeId ? { ...place, memo } : place))
+    );
+    persistLoadedMapPlaces(nextPlaces);
+  };
+
   const handleDeletePlace = (placeId: string) => {
     setPlaces((prev) => prev.filter((place) => place.id !== placeId));
     setManualPlaces((prev) => prev.filter((place) => place.id !== placeId));
     setSelectedPlaceId((current) => (current === placeId ? null : current));
+    setMemoOpenPlaceId((current) => (current === placeId ? null : current));
 
     if (loadedMapId) {
       const updated = removePlaceFromTravelMap(loadedMapId, placeId);
@@ -572,6 +588,30 @@ export default function HomePage() {
                       </div>
                     </div>
                     <p className="mt-1 text-xs text-slate-500 line-clamp-1">{place.address}</p>
+                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => handleTogglePlaceMemo(place.id)}
+                        className={`px-3 text-sm font-semibold rounded-lg min-h-11 ${
+                          place.memo?.trim()
+                            ? 'text-amber-800 bg-amber-100 border border-amber-300'
+                            : 'text-slate-600 bg-white border border-slate-300'
+                        }`}
+                      >
+                        메모{place.memo?.trim() ? ' 있음' : ''}
+                      </button>
+                      {memoOpenPlaceId === place.id ? (
+                        <textarea
+                          value={place.memo ?? ''}
+                          onChange={(e) => handleChangePlaceMemo(place.id, e.target.value)}
+                          placeholder="방문 팁, 영업시간, 주차 등을 적어 두세요"
+                          rows={3}
+                          className="w-full px-3 py-2.5 mt-2 text-base bg-white border rounded-lg outline-none resize-y min-h-24 border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                        />
+                      ) : place.memo?.trim() ? (
+                        <p className="mt-2 text-sm whitespace-pre-wrap text-slate-600">{place.memo}</p>
+                      ) : null}
+                    </div>
                   </div>
                 ))}
               </div>
