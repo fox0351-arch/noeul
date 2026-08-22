@@ -6,6 +6,7 @@ import { generateKML, downloadKmlFile } from '@/lib/kmlBuilder';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
 import { createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap, updateTravelMapNotes } from '@/lib/travelMapStorage';
 import { filesToPlacePhotos, isQuotaExceeded, MAX_PHOTOS_PER_PLACE } from '@/lib/placePhotos';
+import { generateTravelBlogEssay, TravelBlogDraft } from '@/lib/travelBlogEssay';
 import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem, withPresetChecklistTexts } from '@/types/travelMap';
 import GoogleMapViewer from '@/components/GoogleMapViewer';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
@@ -46,6 +47,10 @@ export default function HomePage() {
   const [mapChecklist, setMapChecklist] = useState<TravelMapChecklistItem[]>([]);
   const [isMapMemoOpen, setIsMapMemoOpen] = useState(false);
   const [photoBusyPlaceId, setPhotoBusyPlaceId] = useState<string | null>(null);
+  const [isBlogOpen, setIsBlogOpen] = useState(false);
+  const [isBlogGenerating, setIsBlogGenerating] = useState(false);
+  const [blogDraft, setBlogDraft] = useState<TravelBlogDraft | null>(null);
+  const [blogCopyNotice, setBlogCopyNotice] = useState('');
 
   const displayedPlaces = useMemo(() => {
     if (hideManualExtras) {
@@ -589,6 +594,55 @@ export default function HomePage() {
     );
   };
 
+  const handleGenerateBlog = () => {
+    if (displayedPlaces.length === 0) {
+      setMapError('블로그를 만들 장소가 없습니다. 먼저 장소를 모으세요.');
+      setMapNotice('');
+      return;
+    }
+
+    setMapError('');
+    setBlogCopyNotice('');
+    setIsBlogGenerating(true);
+    setIsBlogOpen(true);
+
+    window.setTimeout(() => {
+      const draft = generateTravelBlogEssay({
+        title: mapTitle.trim() || currentQuery.trim() || '우리들의 여행',
+        memo: mapMemo,
+        checklist: mapChecklist,
+        places: displayedPlaces,
+      });
+      setBlogDraft(draft);
+      setIsBlogGenerating(false);
+    }, 50);
+  };
+
+  const handleCopyBlog = async () => {
+    if (!blogDraft) return;
+    const text = `${blogDraft.title}\n\n${blogDraft.body}\n\n${blogDraft.hashtags.join(' ')}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setBlogCopyNotice('제목, 본문, 해시태그를 복사했습니다.');
+    } catch {
+      setBlogCopyNotice('복사에 실패했습니다. 본문을 길게 눌러 복사해 주세요.');
+    }
+  };
+
+  const handleDownloadBlogMarkdown = () => {
+    if (!blogDraft) return;
+    const safeTitle = (mapTitle.trim() || currentQuery.trim() || '여행에세이').replace(/[\\/:*?"<>|]/g, '_');
+    const blob = new Blob([blogDraft.markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${safeTitle}_블로그.md`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <main className="flex flex-col h-dvh bg-slate-50">
       <header className="flex items-center justify-between gap-2 px-3 py-2 bg-white border-b shrink-0 md:px-6 md:py-3 border-slate-200">
@@ -865,6 +919,14 @@ export default function HomePage() {
             >
               여행지도 메모{mapMemo.trim() || mapChecklist.length > 0 ? ' 있음' : ''}
             </button>
+            <button
+              type="button"
+              onClick={handleGenerateBlog}
+              disabled={isBlogGenerating}
+              className="w-full mb-3 px-3 text-sm font-semibold text-white rounded-lg min-h-11 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
+            >
+              {isBlogGenerating ? '블로그 작성 중...' : '블로그 생성'}
+            </button>
             <div className="flex gap-2 mb-3 shrink-0">
               <button
                 type="button"
@@ -947,6 +1009,70 @@ export default function HomePage() {
           error={detailsError}
           onClose={() => setSelectedPlaceId(null)}
         />
+      )}
+      {isBlogOpen && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center md:items-center md:p-6">
+          <button
+            type="button"
+            aria-label="블로그 닫기"
+            onClick={() => setIsBlogOpen(false)}
+            className="absolute inset-0 bg-slate-900/40"
+          />
+          <div className="relative z-10 flex flex-col w-full max-h-[88vh] p-4 bg-white shadow-sm md:max-w-[640px] md:rounded-2xl rounded-t-2xl">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="min-w-0">
+                <h2 className="text-base font-bold text-slate-800">여행 에세이 블로그</h2>
+                <p className="mt-1 text-xs text-slate-500">60대 부부 여행자의 나레이션 초안입니다.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBlogOpen(false)}
+                className="flex items-center justify-center text-lg font-bold bg-slate-100 rounded-full shrink-0 w-11 h-11 text-slate-700"
+                aria-label="닫기"
+              >
+                ×
+              </button>
+            </div>
+            {isBlogGenerating || !blogDraft ? (
+              <p className="py-10 text-sm text-center text-slate-500">일정을 이야기로 옮기는 중입니다...</p>
+            ) : (
+              <div className="flex flex-col min-h-0 overflow-y-auto">
+                <p className="mb-2 text-xs font-semibold text-slate-500">
+                  본문 {blogDraft.charCount}자
+                </p>
+                <h3 className="mb-3 text-lg font-bold text-slate-900">{blogDraft.title}</h3>
+                <div className="text-base leading-7 whitespace-pre-wrap text-slate-800">{blogDraft.body}</div>
+                <p className="mt-4 text-sm text-amber-800">{blogDraft.hashtags.join(' ')}</p>
+                {blogCopyNotice && <p className="mt-2 text-xs text-slate-600">{blogCopyNotice}</p>}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2 mt-3">
+              <button
+                type="button"
+                onClick={handleCopyBlog}
+                disabled={!blogDraft || isBlogGenerating}
+                className="flex-1 min-w-[7rem] text-sm font-semibold text-white rounded-lg min-h-11 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
+              >
+                복사
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadBlogMarkdown}
+                disabled={!blogDraft || isBlogGenerating}
+                className="flex-1 min-w-[7rem] text-sm font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg min-h-11 hover:bg-slate-50 disabled:text-slate-400"
+              >
+                Markdown 저장
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsBlogOpen(false)}
+                className="flex-1 min-w-[7rem] text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg min-h-11 hover:bg-slate-50"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {isMapMemoOpen && (
         <div className="fixed inset-0 z-[60] flex items-end justify-center md:items-center md:p-6">
