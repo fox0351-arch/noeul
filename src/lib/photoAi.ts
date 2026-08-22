@@ -86,13 +86,20 @@ export async function analyzePhotoWithAi(input: {
   const notes: string[] = [];
   if (!parsed) return { analysis: null, notes: ['invalid-data-url'] };
 
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_PLACES_API_KEY;
-  if (!apiKey) return { analysis: null, notes: ['missing-api-key'] };
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
+    const fromGemini = await analyzeWithGemini(geminiKey, parsed, input.placeName, input.placeMemo, notes);
+    if (fromGemini) return { analysis: fromGemini, notes };
+    return { analysis: null, notes };
+  }
 
-  const fromGemini = await analyzeWithGemini(apiKey, parsed, input.placeName, input.placeMemo, notes);
+  const placesKey = process.env.GOOGLE_PLACES_API_KEY;
+  if (!placesKey) return { analysis: null, notes: ['missing-api-key'] };
+
+  const fromGemini = await analyzeWithGemini(placesKey, parsed, input.placeName, input.placeMemo, notes);
   if (fromGemini) return { analysis: fromGemini, notes };
 
-  const fromVision = await analyzeWithVision(apiKey, parsed.data, input.placeName, notes);
+  const fromVision = await analyzeWithVision(placesKey, parsed.data, input.placeName, notes);
   return { analysis: fromVision, notes };
 }
 
@@ -113,7 +120,7 @@ scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
 메모 힌트: ${placeMemo || '없음'}
 형식: {"scene":"place","caption":"...","subjects":["등대"]}`;
 
-  const models = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite'];
+  const models = await listGeminiModels(apiKey, notes);
 
   for (const model of models) {
     try {
@@ -131,7 +138,11 @@ scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
                 ],
               },
             ],
-            generationConfig: { temperature: 0.3, maxOutputTokens: 256 },
+            generationConfig: {
+              temperature: 0.3,
+              maxOutputTokens: 256,
+              responseMimeType: 'application/json',
+            },
           }),
         }
       );
@@ -144,7 +155,10 @@ scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
       };
       const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || '';
       const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) continue;
+      if (!jsonMatch) {
+        notes.push(`${model}:empty`);
+        continue;
+      }
       const parsedJson: unknown = JSON.parse(jsonMatch[0]);
       const analysis = normalizeAnalysis(parsedJson);
       if (analysis) return analysis;
@@ -156,6 +170,51 @@ scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
   }
 
   return null;
+}
+
+async function listGeminiModels(apiKey: string, notes: string[]): Promise<string[]> {
+  const fallback = [
+    'gemini-flash-latest',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash-latest',
+    'gemini-pro-latest',
+  ];
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
+    );
+    if (!response.ok) {
+      notes.push(`models:${response.status}`);
+      return fallback;
+    }
+    const payload = (await response.json()) as {
+      models?: { name?: string; supportedGenerationMethods?: string[] }[];
+    };
+    const names = (payload.models ?? [])
+      .filter((model) => (model.supportedGenerationMethods ?? []).includes('generateContent'))
+      .map((model) => (model.name || '').replace(/^models\//, ''))
+      .filter(Boolean);
+    const ranked = names.sort((a, b) => scoreModel(a) - scoreModel(b));
+    if (ranked.length === 0) {
+      notes.push('models:empty');
+      return fallback;
+    }
+    notes.push(`models:${ranked[0]}`);
+    return ranked.slice(0, 6);
+  } catch {
+    notes.push('models:error');
+    return fallback;
+  }
+}
+
+function scoreModel(name: string): number {
+  const lower = name.toLowerCase();
+  if (lower.includes('flash') && !lower.includes('lite')) return 0;
+  if (lower.includes('flash')) return 1;
+  if (lower.includes('pro')) return 2;
+  return 3;
 }
 
 async function analyzeWithVision(
