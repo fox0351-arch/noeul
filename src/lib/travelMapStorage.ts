@@ -30,7 +30,8 @@ function isTravelMap(value: unknown): value is TravelMap {
     typeof map.createdAt === 'string' &&
     typeof map.updatedAt === 'string' &&
     Array.isArray(map.places) &&
-    map.places.every(isPlaceItem)
+    map.places.every(isPlaceItem) &&
+    (map.memo === undefined || typeof map.memo === 'string')
   );
 }
 
@@ -81,7 +82,7 @@ export function saveTravelMap(map: TravelMap): TravelMap[] {
 
 export function updateTravelMap(
   id: string,
-  updates: Pick<TravelMap, 'title' | 'places' | 'sourceQuery'>
+  updates: Pick<TravelMap, 'title' | 'places' | 'sourceQuery'> & { memo?: string }
 ): TravelMap[] | null {
   const store = readStore();
   if (!store.maps.some((map) => map.id === id)) {
@@ -98,6 +99,30 @@ export function updateTravelMap(
             title: updates.title,
             places: updates.places,
             sourceQuery: updates.sourceQuery,
+            memo: updates.memo !== undefined ? updates.memo : map.memo,
+            updatedAt: now,
+          }
+        : map
+    ),
+  };
+  writeStore(next);
+  return next.maps;
+}
+
+export function updateTravelMapMemo(id: string, memo: string): TravelMap[] | null {
+  const store = readStore();
+  if (!store.maps.some((map) => map.id === id)) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const next: TravelMapStore = {
+    version: 1,
+    maps: store.maps.map((map) =>
+      map.id === id
+        ? {
+            ...map,
+            memo,
             updatedAt: now,
           }
         : map

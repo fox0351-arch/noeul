@@ -8,4 +8,6 @@ export interface TravelMap {
   updatedAt: string;
   places: PlaceItem[];
   sourceQuery?: string;
+  /** 여행 전체 계획·아이디어를 적는 공용 메모 */
+  memo?: string;
 }

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { PlaceDetails, PlaceItem, PlaceLocation, PlacesSearchResponse } from '@/types/place';
 import { generateKML, downloadKmlFile } from '@/lib/kmlBuilder';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
-import { createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap } from '@/lib/travelMapStorage';
+import { createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap, updateTravelMapMemo } from '@/lib/travelMapStorage';
 import { TravelMap } from '@/types/travelMap';
 import GoogleMapViewer from '@/components/GoogleMapViewer';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
@@ -39,6 +39,8 @@ export default function HomePage() {
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState('');
   const [memoOpenPlaceId, setMemoOpenPlaceId] = useState<string | null>(null);
+  const [mapMemo, setMapMemo] = useState('');
+  const [isMapMemoOpen, setIsMapMemoOpen] = useState(false);
 
   const displayedPlaces = useMemo(() => {
     if (hideManualExtras) {
@@ -156,6 +158,8 @@ export default function HomePage() {
       setHideManualExtras(false);
       setSelectedSavedMapId(null);
       setLoadedMapId(null);
+      setMapMemo('');
+      setIsMapMemoOpen(false);
       if (window.matchMedia('(max-width: 767px)').matches) {
         setIsPlaceListCollapsed(false);
         setPlaceListToggledByUser(true);
@@ -302,6 +306,7 @@ export default function HomePage() {
         title,
         places: snapshotPlaces,
         sourceQuery: currentQuery || undefined,
+        memo: mapMemo,
       });
 
       if (!updated) {
@@ -323,6 +328,7 @@ export default function HomePage() {
       updatedAt: now,
       places: snapshotPlaces,
       sourceQuery: currentQuery || undefined,
+      memo: mapMemo,
     };
 
     setTravelMaps(saveTravelMap(nextMap));
@@ -338,6 +344,7 @@ export default function HomePage() {
     setSelectedSavedMapId(map.id);
     setLoadedMapId(map.id);
     setMapTitle(map.title);
+    setMapMemo(map.memo ?? '');
     setSelectedPlaceId(null);
     setCurrentQuery(map.sourceQuery || map.title);
     if (snapshot[0]) {
@@ -395,11 +402,17 @@ export default function HomePage() {
         }
 
         setTravelMaps(restored);
+        const keepLoadedId = loadedMapId && restored.some((map) => map.id === loadedMapId)
+          ? loadedMapId
+          : null;
         setSelectedSavedMapId((current) =>
           current && restored.some((map) => map.id === current) ? current : null
         );
-        setLoadedMapId((current) =>
-          current && restored.some((map) => map.id === current) ? current : null
+        setLoadedMapId(keepLoadedId);
+        setMapMemo(
+          keepLoadedId
+            ? restored.find((map) => map.id === keepLoadedId)?.memo ?? ''
+            : ''
         );
         setMapError('');
         setMapNotice(`여행지도 ${restored.length}개를 복원했습니다.`);
@@ -424,8 +437,19 @@ export default function HomePage() {
     setTravelMaps(remaining);
     setSelectedSavedMapId((current) => (current === map.id ? null : current));
     setLoadedMapId((current) => (current === map.id ? null : current));
+    if (loadedMapId === map.id) {
+      setMapMemo('');
+      setIsMapMemoOpen(false);
+    }
     setMapError('');
     setMapNotice(`'${map.title}' 여행지도를 삭제했습니다. 지금 화면의 장소는 그대로입니다.`);
+  };
+
+  const handleChangeMapMemo = (memo: string) => {
+    setMapMemo(memo);
+    if (!loadedMapId) return;
+    const updated = updateTravelMapMemo(loadedMapId, memo);
+    if (updated) setTravelMaps(updated);
   };
 
   return (
@@ -647,6 +671,17 @@ export default function HomePage() {
                 </button>
               </div>
             </form>
+            <button
+              type="button"
+              onClick={() => setIsMapMemoOpen(true)}
+              className={`w-full mb-3 px-3 text-sm font-semibold rounded-lg min-h-11 ${
+                mapMemo.trim()
+                  ? 'text-amber-800 bg-amber-100 border border-amber-300'
+                  : 'text-slate-700 bg-white border border-slate-300'
+              }`}
+            >
+              여행지도 메모{mapMemo.trim() ? ' 있음' : ''}
+            </button>
             <div className="flex gap-2 mb-3 shrink-0">
               <button
                 type="button"
@@ -729,6 +764,47 @@ export default function HomePage() {
           error={detailsError}
           onClose={() => setSelectedPlaceId(null)}
         />
+      )}
+      {isMapMemoOpen && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center md:items-center md:p-6">
+          <button
+            type="button"
+            aria-label="여행지도 메모 닫기"
+            onClick={() => setIsMapMemoOpen(false)}
+            className="absolute inset-0 bg-slate-900/40"
+          />
+          <div className="relative z-10 flex flex-col w-full max-h-[88vh] p-4 bg-white shadow-sm md:max-w-[560px] md:rounded-2xl rounded-t-2xl">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="min-w-0">
+                <h2 className="text-base font-bold text-slate-800">여행지도 메모</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  {mapTitle.trim() || '여행 전체 계획과 아이디어를 적어 두세요.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMapMemoOpen(false)}
+                className="flex items-center justify-center text-lg font-bold bg-slate-100 rounded-full shrink-0 w-11 h-11 text-slate-700"
+                aria-label="닫기"
+              >
+                ×
+              </button>
+            </div>
+            <textarea
+              value={mapMemo}
+              onChange={(e) => handleChangeMapMemo(e.target.value)}
+              placeholder="일정, 숙소, 동선, 챙겨갈 것 등을 자유롭게 기록하세요."
+              className="flex-1 w-full min-h-[50vh] md:min-h-[360px] px-3 py-3 text-base bg-white border rounded-lg outline-none resize-y border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+            />
+            <button
+              type="button"
+              onClick={() => setIsMapMemoOpen(false)}
+              className="w-full mt-3 text-sm font-semibold text-white rounded-lg min-h-11 bg-slate-700 hover:bg-slate-800"
+            >
+              닫기
+            </button>
+          </div>
+        </div>
       )}
     </main>
   );
