@@ -588,22 +588,6 @@ export default function HomePage() {
               className="hidden"
               onChange={handleRestoreTravelMapsFile}
             />
-            <div className="flex gap-2 mb-3 shrink-0">
-              <button
-                type="button"
-                onClick={handleBackupTravelMaps}
-                className="flex-1 px-3 text-sm font-semibold text-amber-900 bg-amber-100 border border-amber-300 rounded-lg min-h-11 hover:bg-amber-200"
-              >
-                여행지도 백업
-              </button>
-              <button
-                type="button"
-                onClick={handleRestoreTravelMapsClick}
-                className="flex-1 px-3 text-sm font-semibold text-white rounded-lg min-h-11 bg-slate-700 hover:bg-slate-800"
-              >
-                여행지도 복원
-              </button>
-            </div>
             <form onSubmit={handleSaveTravelMap} className="mb-3">
               <label className="block mb-1 text-xs font-semibold text-slate-500">여행지도 이름</label>
               <div className="flex gap-2">
@@ -622,6 +606,22 @@ export default function HomePage() {
                 </button>
               </div>
             </form>
+            <div className="flex gap-2 mb-3 shrink-0">
+              <button
+                type="button"
+                onClick={handleBackupTravelMaps}
+                className="flex-1 px-3 text-sm font-semibold text-amber-900 bg-amber-100 border border-amber-300 rounded-lg min-h-11 hover:bg-amber-200"
+              >
+                여행지도 백업
+              </button>
+              <button
+                type="button"
+                onClick={handleRestoreTravelMapsClick}
+                className="flex-1 px-3 text-sm font-semibold text-white rounded-lg min-h-11 bg-slate-700 hover:bg-slate-800"
+              >
+                여행지도 복원
+              </button>
+            </div>
             {mapError && <p className="mb-2 text-xs text-red-500">{mapError}</p>}
             {mapNotice && <p className="mb-2 text-xs text-slate-600">{mapNotice}</p>}
 
