@@ -5,7 +5,7 @@ import { PlaceDetails, PlaceItem, PlaceLocation, PlacesSearchResponse } from '@/
 import { generateKML, downloadKmlFile } from '@/lib/kmlBuilder';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
 import { createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap, updateTravelMapNotes } from '@/lib/travelMapStorage';
-import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem } from '@/types/travelMap';
+import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem, withPresetChecklistTexts } from '@/types/travelMap';
 import GoogleMapViewer from '@/components/GoogleMapViewer';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
 
@@ -351,7 +351,7 @@ export default function HomePage() {
     setLoadedMapId(map.id);
     setMapTitle(map.title);
     setMapMemo(map.memo ?? '');
-    setMapChecklist(map.checklist ?? []);
+    setMapChecklist(withPresetChecklistTexts(map.checklist ?? []));
     setSelectedPlaceId(null);
     setCurrentQuery(map.sourceQuery || map.title);
     if (snapshot[0]) {
@@ -423,7 +423,9 @@ export default function HomePage() {
         );
         setMapChecklist(
           keepLoadedId
-            ? restored.find((map) => map.id === keepLoadedId)?.checklist ?? []
+            ? withPresetChecklistTexts(
+                restored.find((map) => map.id === keepLoadedId)?.checklist ?? []
+              )
             : []
         );
         setMapError('');
@@ -482,6 +484,10 @@ export default function HomePage() {
         item.id === itemId ? { ...item, completed: !item.completed } : item
       )
     );
+  };
+
+  const handleDeleteChecklistItem = (itemId: string) => {
+    setMapChecklist((current) => current.filter((item) => item.id !== itemId));
   };
 
   const handleSaveMapNotes = () => {
@@ -863,20 +869,41 @@ export default function HomePage() {
                 </p>
               );
             })()}
-            <div className="mb-3 overflow-y-auto max-h-40 space-y-1">
+            <div className="mb-3 overflow-y-auto max-h-52 space-y-1">
               {mapChecklist.length === 0 ? (
-                <p className="text-sm text-slate-400">빠른 추가 버튼으로 체크리스트를 만들 수 있습니다.</p>
+                <p className="text-sm text-slate-400">빠른 추가 버튼으로 할 일을 만들 수 있습니다.</p>
               ) : (
                 mapChecklist.map((item) => (
-                  <label key={item.id} className="flex items-center gap-2 px-1 py-1.5 text-sm text-slate-800">
-                    <input
-                      type="checkbox"
-                      checked={item.completed}
-                      onChange={() => handleToggleChecklistItem(item.id)}
-                      className="w-5 h-5 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
-                    />
-                    <span className={item.completed ? 'line-through text-slate-500' : ''}>{item.text}</span>
-                  </label>
+                  <div key={item.id} className="flex items-center gap-1 pr-1">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleChecklistItem(item.id)}
+                      className="flex items-center flex-1 min-w-0 gap-3 px-1 py-1 text-left min-h-12"
+                      aria-pressed={item.completed}
+                    >
+                      <span
+                        className={`flex items-center justify-center shrink-0 w-8 h-8 rounded-md border-2 text-lg font-bold ${
+                          item.completed
+                            ? 'text-white bg-amber-600 border-amber-600'
+                            : 'text-transparent bg-white border-slate-400'
+                        }`}
+                        aria-hidden="true"
+                      >
+                        ✓
+                      </span>
+                      <span className={`text-base ${item.completed ? 'line-through text-slate-500' : 'text-slate-800'}`}>
+                        {item.text}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteChecklistItem(item.id)}
+                      className="flex items-center justify-center text-lg font-bold shrink-0 w-11 h-11 text-slate-500 rounded-lg hover:bg-slate-100 hover:text-slate-800"
+                      aria-label={`${item.text} 삭제`}
+                    >
+                      ×
+                    </button>
+                  </div>
                 ))
               )}
             </div>
