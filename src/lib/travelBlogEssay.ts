@@ -165,19 +165,45 @@ function buildSeoTags(tripName: string, places: PlaceItem[], scenes: PhotoScene[
 function extraReflections(tripName: string, places: PlaceItem[], memo: string): string[] {
   const first = places[0]?.name;
   const last = places[places.length - 1]?.name;
-  const extras = [
-    '천천히 걸어도 괜찮은 길이었다. 속도를 줄이니 발밑의 작은 소리까지 들렸다.',
-    '오늘은 풍경보다 사람이 더 기억에 남았다. 아내의 걸음이 내 걸음보다 반 박자 느렸고, 그 간격이 편했다.',
+  return [
+    '천천히 걸어도 괜찮은 길이었다. 속도를 줄이니 발밑의 작은 소리까지 들렸다. 누군가의 일정을 따라가지 않아도, 둘이 맞춘 보폭이면 하루는 이미 충분했다.',
+    '오늘은 풍경보다 사람이 더 기억에 남았다. 아내의 걸음이 내 걸음보다 반 박자 느렸고, 그 간격이 편했다. 나는 앞장서지 않기로 했다.',
     memo.trim()
-      ? `여행 전에 적어 둔 메모를 다시 읽었다. ${memo.trim().slice(0, 100)}${memo.trim().length > 100 ? '…' : ''}`
-      : '적어 둔 문장이 많지 않아도, 둘이 나눈 침묵이 하루를 채워 주었다.',
+      ? `여행 전에 적어 둔 메모를 다시 읽었다. ${memo.trim().slice(0, 120)}${memo.trim().length > 120 ? '…' : ''} 문장이 길지 않아도, 그날의 마음이 거기 있었다.`
+      : '적어 둔 문장이 많지 않아도, 둘이 나눈 침묵이 하루를 채워 주었다. 말이 줄어든 자리가 오히려 선명했다.',
     first && last && first !== last
-      ? `${first}에서 시작한 발걸음이 ${last}에 닿을 때까지, 우리는 순서를 바꾸지 않았다. 찍힌 사진의 앞뒤가 곧 오늘의 지도였다.`
-      : '같은 자리를 오래 바라보는 일이, 멀리 가는 일보다 먼저였다.',
-    `${tripName}을(를) 크게 말하지 않기로 했다. 다만 손끝을 맞댄 채로, 하루를 접었다.`,
-    '돌아가는 길에도 서두르지 않았다. 창밖의 빛이 줄어드는 것을 그냥 두었다.',
+      ? `${first}에서 시작한 발걸음이 ${last}에 닿을 때까지, 우리는 순서를 바꾸지 않았다. 찍힌 사진의 앞뒤가 곧 오늘의 지도였고, 그 지도를 고치려 하지 않았다.`
+      : '같은 자리를 오래 바라보는 일이, 멀리 가는 일보다 먼저였다. 눈에 담은 것을 굳이 더하지 않았다.',
+    `${tripName}을(를) 크게 말하지 않기로 했다. 다만 손끝을 맞댄 채로, 하루를 접었다. 자랑할 목록 대신, 둘이 서 있던 시간만 남기기로 했다.`,
+    '돌아가는 길에도 서두르지 않았다. 창밖의 빛이 줄어드는 것을 그냥 두었다. 도착 시각을 맞추는 일보다, 옆자리의 숨소리를 듣는 일이 먼저였다.',
+    '나이를 더한 여행은 설명을 줄인다. 어디에 갔는지를 늘어놓기보다, 어떤 속도로 걸었는지를 먼저 떠올린다. 우리는 그 속도를 버리지 않기로 했다.',
+    '사진 한 장의 앞뒤를 바꾸지 않는 것은 고집이 아니었다. 그날 우리가 실제로 지나친 순서를 지키는 일이었다. 기억은 편집보다 정직할 때가 많다.',
+    '물병을 나눠 마시며 잠시 앉았다. 벤치의 온기가 남아 있었고, 말은 없어도 하루가 아직 끝나지 않았음을 서로 알고 있었다.',
+    '저녁이 가까워질수록 발은 느려졌다. 느려진 만큼 그림자의 길이가 늘어났고, 그 길이를 재지 않은 채 우리는 나란히 걸었다.',
+  ].filter((line): line is string => Boolean(line));
+}
+
+function padBody(paragraphs: string[], closing: string): string {
+  const pool = [
+    '바람이 옷깃을 스쳐도 자리를 옮기지 않았다. 잠시 멈춰 선 시간이 동선 밖의 예외가 아니라, 동선 안의 숨이었다.',
+    '주머니 속의 손은 서로의 온기를 확인하고 있었다. 큰 약속은 없었다. 다만 이 길을 함께 마치자는 마음만 있었다.',
+    '멀리서 들리는 소리에 고개를 돌렸다가, 다시 발밑을 보았다. 여행의 중심은 늘 가까운 데 있었다.',
+    '우리는 많이 담으려 하지 않았다. 남긴 장면의 순서가 곧 걸음이었고, 그 걸음을 솔직하게 두기로 했다.',
+    '하루의 끝에서 나는 아내의 어깨를 한번 두드렸다. 대답 대신 짧은 웃음이 돌아왔다. 그것으로 충분했다.',
+    '지도 위의 점보다, 점이 이어진 선이 중요했다. 선은 사진이 쌓인 방향과 같았고, 우리는 그 선을 거슬러 올라가지 않았다.',
   ];
-  return extras;
+
+  let middle = [...paragraphs];
+  let body = joinBody([...middle, closing]);
+  let i = 0;
+  while (body.length < MIN_CHARS && i < 20) {
+    const next = joinBody([...middle, pool[i % pool.length], closing]);
+    if (next.length > MAX_CHARS) break;
+    middle = [...middle, pool[i % pool.length]];
+    body = next;
+    i += 1;
+  }
+  return body;
 }
 
 export function generateTravelBlogEssay(input: {
@@ -210,21 +236,14 @@ export function generateTravelBlogEssay(input: {
   const core = [...opening, checklistParagraph(input.checklist), ...routeParagraphs];
 
   let middle = [...core];
-  let body = joinBody([...middle, closing]);
-
   for (const extra of extras) {
-    if (body.length >= MIN_CHARS) break;
     const next = joinBody([...middle, extra, closing]);
     if (next.length > MAX_CHARS) break;
     middle = [...middle, extra];
-    body = next;
+    if (next.length >= MIN_CHARS) break;
   }
 
-  if (body.length < MIN_CHARS) {
-    const pad = '같은 길을 되짚으며 우리는 말이 줄었다. 침묵 속에서도 발소리가 남았고, 그 소리가 하루의 끝이 되었다.';
-    const next = joinBody([...middle, pad, closing]);
-    if (next.length <= MAX_CHARS) body = next;
-  }
+  let body = padBody(middle, closing);
 
   if (body.length > MAX_CHARS) {
     const parts = body.split('\n\n');
