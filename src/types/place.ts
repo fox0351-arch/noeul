@@ -14,6 +14,13 @@ export interface PlaceItem {
   addedManually?: boolean;
   /** 사용자가 장소마다 남긴 메모 */
   memo?: string;
+  /** 사용자가 장소마다 첨부한 사진 (압축 data URL) */
+  photos?: PlacePhoto[];
+}
+
+export interface PlacePhoto {
+  id: string;
+  dataUrl: string;
 }
 
 export interface PlacesSearchResponse {

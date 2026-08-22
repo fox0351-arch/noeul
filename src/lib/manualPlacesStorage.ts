@@ -1,6 +1,12 @@
-import { PlaceItem } from '@/types/place';
+import { PlaceItem, PlacePhoto } from '@/types/place';
 
 const STORAGE_KEY = 'noeul.manualPlaces.v1';
+
+function isPlacePhoto(value: unknown): value is PlacePhoto {
+  if (!value || typeof value !== 'object') return false;
+  const photo = value as PlacePhoto;
+  return typeof photo.id === 'string' && typeof photo.dataUrl === 'string' && photo.dataUrl.startsWith('data:image/');
+}
 
 function isManualPlace(value: unknown): value is PlaceItem {
   if (!value || typeof value !== 'object') return false;
@@ -27,6 +33,7 @@ export function loadManualPlaces(): PlaceItem[] {
     return parsed.filter(isManualPlace).map((place) => ({
       ...place,
       addedManually: true,
+      photos: Array.isArray(place.photos) ? place.photos.filter(isPlacePhoto) : undefined,
     }));
   } catch {
     return [];

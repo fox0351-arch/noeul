@@ -5,6 +5,7 @@ import { PlaceDetails, PlaceItem, PlaceLocation, PlacesSearchResponse } from '@/
 import { generateKML, downloadKmlFile } from '@/lib/kmlBuilder';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
 import { createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap, updateTravelMapNotes } from '@/lib/travelMapStorage';
+import { filesToPlacePhotos, isQuotaExceeded, MAX_PHOTOS_PER_PLACE } from '@/lib/placePhotos';
 import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem, withPresetChecklistTexts } from '@/types/travelMap';
 import GoogleMapViewer from '@/components/GoogleMapViewer';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
@@ -34,6 +35,8 @@ export default function HomePage() {
   const [placeListToggledByUser, setPlaceListToggledByUser] = useState(false);
   const placeListSectionRef = useRef<HTMLDivElement>(null);
   const backupFileInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const photoTargetPlaceId = useRef<string | null>(null);
   const shouldScrollToPlaceList = useRef(false);
   const [placeDetails, setPlaceDetails] = useState<PlaceDetails | null>(null);
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
@@ -42,6 +45,7 @@ export default function HomePage() {
   const [mapMemo, setMapMemo] = useState('');
   const [mapChecklist, setMapChecklist] = useState<TravelMapChecklistItem[]>([]);
   const [isMapMemoOpen, setIsMapMemoOpen] = useState(false);
+  const [photoBusyPlaceId, setPhotoBusyPlaceId] = useState<string | null>(null);
 
   const displayedPlaces = useMemo(() => {
     if (hideManualExtras) {
@@ -51,7 +55,14 @@ export default function HomePage() {
     const savedById = new Map(manualPlaces.map((place) => [place.id, place]));
     const fromSearchOrList = places.map((place) => {
       const saved = savedById.get(place.id);
-      return saved ? { ...place, addedManually: true, memo: place.memo ?? saved.memo } : place;
+      return saved
+        ? {
+            ...place,
+            addedManually: true,
+            memo: place.memo ?? saved.memo,
+            photos: place.photos ?? saved.photos,
+          }
+        : place;
     });
     const seen = new Set(fromSearchOrList.map((place) => place.id));
     const extras = manualPlaces.filter((place) => !seen.has(place.id));
@@ -71,7 +82,13 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!hasLoadedManualPlaces) return;
-    saveManualPlaces(manualPlaces);
+    try {
+      saveManualPlaces(manualPlaces);
+    } catch (error) {
+      if (isQuotaExceeded(error)) {
+        setMapError('사진 용량이 커서 기기에 저장하지 못했습니다. 사진을 줄여 주세요.');
+      }
+    }
   }, [manualPlaces, hasLoadedManualPlaces]);
 
   useEffect(() => {
@@ -226,15 +243,21 @@ export default function HomePage() {
 
   const persistLoadedMapPlaces = (nextPlaces: PlaceItem[]) => {
     if (!loadedMapId) return;
-    const updated = updateTravelMap(loadedMapId, {
-      title: mapTitle.trim() || '여행지도',
-      places: nextPlaces.map((place) => ({ ...place })),
-      sourceQuery: currentQuery || undefined,
-      memo: mapMemo,
-      checklist: mapChecklist,
-    });
-    if (updated) {
-      setTravelMaps(updated);
+    try {
+      const updated = updateTravelMap(loadedMapId, {
+        title: mapTitle.trim() || '여행지도',
+        places: nextPlaces.map((place) => ({ ...place })),
+        sourceQuery: currentQuery || undefined,
+        memo: mapMemo,
+        checklist: mapChecklist,
+      });
+      if (updated) {
+        setTravelMaps(updated);
+      }
+    } catch (error) {
+      if (isQuotaExceeded(error)) {
+        setMapError('사진 용량이 커서 여행지도에 저장하지 못했습니다. 사진을 줄여 주세요.');
+      }
     }
   };
 
@@ -261,6 +284,63 @@ export default function HomePage() {
     setPlaces(nextPlaces);
     setManualPlaces((prev) =>
       prev.map((place) => (place.id === placeId ? { ...place, memo } : place))
+    );
+    persistLoadedMapPlaces(nextPlaces);
+  };
+
+  const handleOpenPlacePhotos = (placeId: string) => {
+    photoTargetPlaceId.current = placeId;
+    photoInputRef.current?.click();
+  };
+
+  const handlePlacePhotosSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    const placeId = photoTargetPlaceId.current;
+    e.target.value = '';
+    if (!files?.length || !placeId) return;
+
+    setPhotoBusyPlaceId(placeId);
+    setMapError('');
+    try {
+      const added = await filesToPlacePhotos(files);
+      if (added.length === 0) {
+        setMapError('선택한 사진을 읽지 못했습니다. 다른 사진을 골라 주세요.');
+        return;
+      }
+
+      const current = displayedPlaces.find((place) => place.id === placeId);
+      const existing = current?.photos ?? [];
+      const nextPhotos = [...existing, ...added].slice(0, MAX_PHOTOS_PER_PLACE);
+      if (existing.length + added.length > MAX_PHOTOS_PER_PLACE) {
+        setMapNotice(`장소당 사진은 최대 ${MAX_PHOTOS_PER_PLACE}장까지 저장됩니다.`);
+      }
+
+      const nextPlaces = displayedPlaces.map((place) =>
+        place.id === placeId ? { ...place, photos: nextPhotos } : place
+      );
+      setPlaces(nextPlaces);
+      setManualPlaces((prev) =>
+        prev.map((place) => (place.id === placeId ? { ...place, photos: nextPhotos } : place))
+      );
+      persistLoadedMapPlaces(nextPlaces);
+    } finally {
+      setPhotoBusyPlaceId(null);
+    }
+  };
+
+  const handleDeletePlacePhoto = (placeId: string, photoId: string) => {
+    const nextPlaces = displayedPlaces.map((place) =>
+      place.id === placeId
+        ? { ...place, photos: (place.photos ?? []).filter((photo) => photo.id !== photoId) }
+        : place
+    );
+    setPlaces(nextPlaces);
+    setManualPlaces((prev) =>
+      prev.map((place) =>
+        place.id === placeId
+          ? { ...place, photos: (place.photos ?? []).filter((photo) => photo.id !== photoId) }
+          : place
+      )
     );
     persistLoadedMapPlaces(nextPlaces);
   };
@@ -305,6 +385,7 @@ export default function HomePage() {
 
     const snapshotPlaces = displayedPlaces.map((place) => ({ ...place }));
 
+    try {
     if (loadedMapId) {
       const updated = updateTravelMap(loadedMapId, {
         title,
@@ -341,6 +422,13 @@ export default function HomePage() {
     setSelectedSavedMapId(nextMap.id);
     setMapTitle('');
     setMapNotice(`'${title}' 여행지도를 저장했습니다.`);
+    } catch (error) {
+      if (isQuotaExceeded(error)) {
+        setMapError('사진 용량이 커서 여행지도를 저장하지 못했습니다. 사진을 줄여 주세요.');
+        return;
+      }
+      setMapError('여행지도를 저장하지 못했습니다.');
+    }
   };
 
   const handleLoadTravelMap = (map: TravelMap) => {
@@ -663,17 +751,34 @@ export default function HomePage() {
                     </div>
                     <p className="mt-1 text-xs text-slate-500 line-clamp-1">{place.address}</p>
                     <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        type="button"
-                        onClick={() => handleTogglePlaceMemo(place.id)}
-                        className={`px-3 text-sm font-semibold rounded-lg min-h-11 ${
-                          place.memo?.trim()
-                            ? 'text-amber-800 bg-amber-100 border border-amber-300'
-                            : 'text-slate-600 bg-white border border-slate-300'
-                        }`}
-                      >
-                        메모{place.memo?.trim() ? ' 있음' : ''}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePlaceMemo(place.id)}
+                          className={`px-3 text-sm font-semibold rounded-lg min-h-11 ${
+                            place.memo?.trim()
+                              ? 'text-amber-800 bg-amber-100 border border-amber-300'
+                              : 'text-slate-600 bg-white border border-slate-300'
+                          }`}
+                        >
+                          메모{place.memo?.trim() ? ' 있음' : ''}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenPlacePhotos(place.id)}
+                          className={`px-3 text-sm font-semibold rounded-lg min-h-11 ${
+                            (place.photos?.length ?? 0) > 0
+                              ? 'text-amber-800 bg-amber-100 border border-amber-300'
+                              : 'text-slate-600 bg-white border border-slate-300'
+                          }`}
+                        >
+                          {photoBusyPlaceId === place.id
+                            ? '사진 준비 중...'
+                            : (place.photos?.length ?? 0) > 0
+                              ? `📷 사진 ${place.photos?.length}장`
+                              : '사진'}
+                        </button>
+                      </div>
                       {memoOpenPlaceId === place.id ? (
                         <textarea
                           value={place.memo ?? ''}
@@ -685,6 +790,27 @@ export default function HomePage() {
                       ) : place.memo?.trim() ? (
                         <p className="mt-2 text-sm whitespace-pre-wrap text-slate-600">{place.memo}</p>
                       ) : null}
+                      {(place.photos?.length ?? 0) > 0 && (
+                        <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
+                          {place.photos?.map((photo) => (
+                            <div key={photo.id} className="relative shrink-0">
+                              <img
+                                src={photo.dataUrl}
+                                alt={`${place.name} 첨부 사진`}
+                                className="object-cover w-20 h-20 rounded-lg bg-slate-100"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleDeletePlacePhoto(place.id, photo.id)}
+                                className="absolute top-0.5 right-0.5 flex items-center justify-center text-sm font-bold text-white rounded-full w-8 h-8 bg-slate-900/70"
+                                aria-label={`${place.name} 사진 삭제`}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -701,6 +827,14 @@ export default function HomePage() {
               accept="application/json,.json"
               className="hidden"
               onChange={handleRestoreTravelMapsFile}
+            />
+            <input
+              ref={photoInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={handlePlacePhotosSelected}
             />
             <form onSubmit={handleSaveTravelMap} className="mb-3">
               <label className="block mb-1 text-xs font-semibold text-slate-500">여행지도 이름</label>

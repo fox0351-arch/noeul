@@ -1,4 +1,4 @@
-import { PlaceItem } from '@/types/place';
+import { PlaceItem, PlacePhoto } from '@/types/place';
 import { TravelMap, TravelMapChecklistItem } from '@/types/travelMap';
 
 const STORAGE_KEY = 'noeul.travelMaps.v1';
@@ -6,6 +6,12 @@ const STORAGE_KEY = 'noeul.travelMaps.v1';
 interface TravelMapStore {
   version: 1;
   maps: TravelMap[];
+}
+
+function isPlacePhoto(value: unknown): value is PlacePhoto {
+  if (!value || typeof value !== 'object') return false;
+  const photo = value as PlacePhoto;
+  return typeof photo.id === 'string' && typeof photo.dataUrl === 'string' && photo.dataUrl.startsWith('data:image/');
 }
 
 function isPlaceItem(value: unknown): value is PlaceItem {
@@ -17,8 +23,16 @@ function isPlaceItem(value: unknown): value is PlaceItem {
     typeof place.address === 'string' &&
     typeof place.location?.latitude === 'number' &&
     typeof place.location?.longitude === 'number' &&
-    (place.memo === undefined || typeof place.memo === 'string')
+    (place.memo === undefined || typeof place.memo === 'string') &&
+    (place.photos === undefined || Array.isArray(place.photos))
   );
+}
+
+function normalizePlaceItem(place: PlaceItem): PlaceItem {
+  return {
+    ...place,
+    photos: Array.isArray(place.photos) ? place.photos.filter(isPlacePhoto) : undefined,
+  };
 }
 
 function isChecklistItem(value: unknown): value is TravelMapChecklistItem {
@@ -65,7 +79,10 @@ function readStore(): TravelMapStore {
 
     return {
       version: 1,
-      maps: mapsValue.filter(isTravelMap),
+      maps: mapsValue.filter(isTravelMap).map((map) => ({
+        ...map,
+        places: map.places.map(normalizePlaceItem),
+      })),
     };
   } catch {
     return emptyStore();
@@ -201,7 +218,10 @@ function parseBackupStore(value: unknown): TravelMapStore | null {
 
   return {
     version: 1,
-    maps: record.maps,
+    maps: (record.maps as TravelMap[]).map((map) => ({
+      ...map,
+      places: map.places.map(normalizePlaceItem),
+    })),
   };
 }
 
