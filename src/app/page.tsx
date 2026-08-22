@@ -476,7 +476,7 @@ export default function HomePage() {
 
           <div
             ref={placeListSectionRef}
-            className={`workspace-places min-h-0 p-3 overflow-y-auto md:p-4 ${
+            className={`workspace-places p-3 md:min-h-0 md:overflow-y-auto md:p-4 ${
               isPlaceListCollapsed ? 'max-md:flex-none' : ''
             }`}
           >
