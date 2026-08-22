@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { PlaceDetails, PlaceItem, PlaceLocation, PlacesSearchResponse } from '@/types/place';
 import { generateKML, downloadKmlFile } from '@/lib/kmlBuilder';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
-import { createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap, updateTravelMapMemo } from '@/lib/travelMapStorage';
-import { TravelMap } from '@/types/travelMap';
+import { createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap, updateTravelMapNotes } from '@/lib/travelMapStorage';
+import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem } from '@/types/travelMap';
 import GoogleMapViewer from '@/components/GoogleMapViewer';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
 
@@ -40,6 +40,7 @@ export default function HomePage() {
   const [detailsError, setDetailsError] = useState('');
   const [memoOpenPlaceId, setMemoOpenPlaceId] = useState<string | null>(null);
   const [mapMemo, setMapMemo] = useState('');
+  const [mapChecklist, setMapChecklist] = useState<TravelMapChecklistItem[]>([]);
   const [isMapMemoOpen, setIsMapMemoOpen] = useState(false);
 
   const displayedPlaces = useMemo(() => {
@@ -159,6 +160,7 @@ export default function HomePage() {
       setSelectedSavedMapId(null);
       setLoadedMapId(null);
       setMapMemo('');
+      setMapChecklist([]);
       setIsMapMemoOpen(false);
       if (window.matchMedia('(max-width: 767px)').matches) {
         setIsPlaceListCollapsed(false);
@@ -228,6 +230,8 @@ export default function HomePage() {
       title: mapTitle.trim() || '여행지도',
       places: nextPlaces.map((place) => ({ ...place })),
       sourceQuery: currentQuery || undefined,
+      memo: mapMemo,
+      checklist: mapChecklist,
     });
     if (updated) {
       setTravelMaps(updated);
@@ -307,6 +311,7 @@ export default function HomePage() {
         places: snapshotPlaces,
         sourceQuery: currentQuery || undefined,
         memo: mapMemo,
+        checklist: mapChecklist,
       });
 
       if (!updated) {
@@ -329,6 +334,7 @@ export default function HomePage() {
       places: snapshotPlaces,
       sourceQuery: currentQuery || undefined,
       memo: mapMemo,
+      checklist: mapChecklist,
     };
 
     setTravelMaps(saveTravelMap(nextMap));
@@ -345,6 +351,7 @@ export default function HomePage() {
     setLoadedMapId(map.id);
     setMapTitle(map.title);
     setMapMemo(map.memo ?? '');
+    setMapChecklist(map.checklist ?? []);
     setSelectedPlaceId(null);
     setCurrentQuery(map.sourceQuery || map.title);
     if (snapshot[0]) {
@@ -414,6 +421,11 @@ export default function HomePage() {
             ? restored.find((map) => map.id === keepLoadedId)?.memo ?? ''
             : ''
         );
+        setMapChecklist(
+          keepLoadedId
+            ? restored.find((map) => map.id === keepLoadedId)?.checklist ?? []
+            : []
+        );
         setMapError('');
         setMapNotice(`여행지도 ${restored.length}개를 복원했습니다.`);
         window.alert('여행지도를 복원했습니다.');
@@ -439,17 +451,48 @@ export default function HomePage() {
     setLoadedMapId((current) => (current === map.id ? null : current));
     if (loadedMapId === map.id) {
       setMapMemo('');
+      setMapChecklist([]);
       setIsMapMemoOpen(false);
     }
     setMapError('');
     setMapNotice(`'${map.title}' 여행지도를 삭제했습니다. 지금 화면의 장소는 그대로입니다.`);
   };
 
-  const handleChangeMapMemo = (memo: string) => {
-    setMapMemo(memo);
+  const persistMapNotes = (
+    memo: string,
+    checklist: TravelMapChecklistItem[]
+  ) => {
     if (!loadedMapId) return;
-    const updated = updateTravelMapMemo(loadedMapId, memo);
+    const updated = updateTravelMapNotes(loadedMapId, { memo, checklist });
     if (updated) setTravelMaps(updated);
+  };
+
+  const handleAddChecklistPreset = (presetId: string) => {
+    const preset = TRAVEL_MAP_CHECKLIST_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    setMapChecklist((current) => {
+      if (current.some((item) => item.id === preset.id)) return current;
+      return [...current, { id: preset.id, text: preset.text, completed: false }];
+    });
+  };
+
+  const handleToggleChecklistItem = (itemId: string) => {
+    setMapChecklist((current) =>
+      current.map((item) =>
+        item.id === itemId ? { ...item, completed: !item.completed } : item
+      )
+    );
+  };
+
+  const handleSaveMapNotes = () => {
+    persistMapNotes(mapMemo, mapChecklist);
+    setIsMapMemoOpen(false);
+    setMapError('');
+    setMapNotice(
+      loadedMapId
+        ? '여행지도 메모와 체크리스트를 저장했습니다.'
+        : '메모와 체크리스트를 반영했습니다. 여행지도 저장을 눌러 함께 보관하세요.'
+    );
   };
 
   return (
@@ -675,12 +718,12 @@ export default function HomePage() {
               type="button"
               onClick={() => setIsMapMemoOpen(true)}
               className={`w-full mb-3 px-3 text-sm font-semibold rounded-lg min-h-11 ${
-                mapMemo.trim()
+                mapMemo.trim() || mapChecklist.length > 0
                   ? 'text-amber-800 bg-amber-100 border border-amber-300'
                   : 'text-slate-700 bg-white border border-slate-300'
               }`}
             >
-              여행지도 메모{mapMemo.trim() ? ' 있음' : ''}
+              여행지도 메모{mapMemo.trim() || mapChecklist.length > 0 ? ' 있음' : ''}
             </button>
             <div className="flex gap-2 mb-3 shrink-0">
               <button
@@ -790,19 +833,75 @@ export default function HomePage() {
                 ×
               </button>
             </div>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {TRAVEL_MAP_CHECKLIST_PRESETS.map((preset) => {
+                const added = mapChecklist.some((item) => item.id === preset.id);
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => handleAddChecklistPreset(preset.id)}
+                    disabled={added}
+                    className={`px-3 py-2 text-sm font-semibold rounded-lg min-h-11 ${
+                      added
+                        ? 'text-slate-400 bg-slate-100 border border-slate-200'
+                        : 'text-slate-800 bg-white border border-slate-300 hover:border-amber-400 hover:bg-amber-50'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+            {(() => {
+              const completedCount = mapChecklist.filter((item) => item.completed).length;
+              const totalCount = mapChecklist.length;
+              const percent = totalCount === 0 ? 0 : Math.floor((completedCount / totalCount) * 100);
+              return (
+                <p className="mb-2 text-sm font-semibold text-slate-700">
+                  진행률 : {completedCount}/{totalCount} 완료 ({percent}%)
+                </p>
+              );
+            })()}
+            <div className="mb-3 overflow-y-auto max-h-40 space-y-1">
+              {mapChecklist.length === 0 ? (
+                <p className="text-sm text-slate-400">빠른 추가 버튼으로 체크리스트를 만들 수 있습니다.</p>
+              ) : (
+                mapChecklist.map((item) => (
+                  <label key={item.id} className="flex items-center gap-2 px-1 py-1.5 text-sm text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={item.completed}
+                      onChange={() => handleToggleChecklistItem(item.id)}
+                      className="w-5 h-5 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className={item.completed ? 'line-through text-slate-500' : ''}>{item.text}</span>
+                  </label>
+                ))
+              )}
+            </div>
             <textarea
               value={mapMemo}
-              onChange={(e) => handleChangeMapMemo(e.target.value)}
+              onChange={(e) => setMapMemo(e.target.value)}
               placeholder="일정, 숙소, 동선, 챙겨갈 것 등을 자유롭게 기록하세요."
-              className="flex-1 w-full min-h-[50vh] md:min-h-[360px] px-3 py-3 text-base bg-white border rounded-lg outline-none resize-y border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+              className="flex-1 w-full min-h-[22vh] md:min-h-[180px] px-3 py-3 text-base bg-white border rounded-lg outline-none resize-y border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
             />
-            <button
-              type="button"
-              onClick={() => setIsMapMemoOpen(false)}
-              className="w-full mt-3 text-sm font-semibold text-white rounded-lg min-h-11 bg-slate-700 hover:bg-slate-800"
-            >
-              닫기
-            </button>
+            <div className="flex gap-2 mt-3">
+              <button
+                type="button"
+                onClick={handleSaveMapNotes}
+                className="flex-1 text-sm font-semibold text-white rounded-lg min-h-11 bg-amber-600 hover:bg-amber-700"
+              >
+                저장
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsMapMemoOpen(false)}
+                className="flex-1 text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg min-h-11 hover:bg-slate-50"
+              >
+                닫기
+              </button>
+            </div>
           </div>
         </div>
       )}
