@@ -62,17 +62,26 @@ export default function GoogleMapViewer({
 
     const bounds = new google.maps.LatLngBounds();
 
-    places.forEach((place) => {
+    places.forEach((place, index) => {
       const position = { lat: place.location.latitude, lng: place.location.longitude };
       bounds.extend(position);
 
       const marker = new google.maps.Marker({
         position,
         map,
-        title: place.name,
-        icon: place.addedManually
-          ? 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
-          : 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png',
+        title: `${index + 1}. ${place.name}`,
+        label: {
+          text: String(index + 1),
+          color: '#ffffff',
+          fontWeight: 'bold',
+          fontSize: '11px',
+        },
+        icon: {
+          url: place.addedManually
+            ? 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
+            : 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png',
+          labelOrigin: new google.maps.Point(16, 10),
+        },
       });
 
       marker.addListener('click', () => {

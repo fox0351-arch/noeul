@@ -217,6 +217,30 @@ export default function HomePage() {
     }
   };
 
+  const persistLoadedMapPlaces = (nextPlaces: PlaceItem[]) => {
+    if (!loadedMapId) return;
+    const updated = updateTravelMap(loadedMapId, {
+      title: mapTitle.trim() || '여행지도',
+      places: nextPlaces.map((place) => ({ ...place })),
+      sourceQuery: currentQuery || undefined,
+    });
+    if (updated) {
+      setTravelMaps(updated);
+    }
+  };
+
+  const handleMovePlace = (index: number, offset: -1 | 1) => {
+    const target = index + offset;
+    if (target < 0 || target >= displayedPlaces.length) return;
+
+    const nextPlaces = [...displayedPlaces];
+    const [moved] = nextPlaces.splice(index, 1);
+    nextPlaces.splice(target, 0, moved);
+
+    setPlaces(nextPlaces);
+    persistLoadedMapPlaces(nextPlaces);
+  };
+
   const handleDeletePlace = (placeId: string) => {
     setPlaces((prev) => prev.filter((place) => place.id !== placeId));
     setManualPlaces((prev) => prev.filter((place) => place.id !== placeId));
@@ -497,8 +521,34 @@ export default function HomePage() {
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
+                      <div className="flex flex-col gap-0.5 shrink-0">
+                        <button
+                          type="button"
+                          aria-label={`${place.name} 한 칸 위로`}
+                          disabled={idx === 0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleMovePlace(idx, -1);
+                          }}
+                          className="flex items-center justify-center text-sm font-bold rounded w-9 h-9 md:w-7 md:h-7 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+                        >
+                          ▲
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`${place.name} 한 칸 아래로`}
+                          disabled={idx === displayedPlaces.length - 1}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleMovePlace(idx, 1);
+                          }}
+                          className="flex items-center justify-center text-sm font-bold rounded w-9 h-9 md:w-7 md:h-7 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+                        >
+                          ▼
+                        </button>
+                      </div>
                       <h3
-                        className={`text-sm font-semibold ${
+                        className={`flex-1 min-w-0 text-sm font-semibold ${
                           place.addedManually ? 'text-orange-600' : 'text-slate-900'
                         }`}
                       >
