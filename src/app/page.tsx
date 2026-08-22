@@ -6,6 +6,7 @@ import { generateKML, downloadKmlFile } from '@/lib/kmlBuilder';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
 import { createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap, updateTravelMapNotes } from '@/lib/travelMapStorage';
 import { filesToPlacePhotos, isQuotaExceeded, MAX_PHOTOS_PER_PLACE } from '@/lib/placePhotos';
+import { analyzePlacePhotos } from '@/lib/photoAiClient';
 import { generateTravelBlogEssay, TravelBlogDraft } from '@/lib/travelBlogEssay';
 import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem, withPresetChecklistTexts } from '@/types/travelMap';
 import GoogleMapViewer from '@/components/GoogleMapViewer';
@@ -323,11 +324,15 @@ export default function HomePage() {
       const nextPlaces = displayedPlaces.map((place) =>
         place.id === placeId ? { ...place, photos: nextPhotos } : place
       );
-      setPlaces(nextPlaces);
+      const analyzed = await analyzePlacePhotos(nextPlaces);
+      setPlaces(analyzed);
       setManualPlaces((prev) =>
-        prev.map((place) => (place.id === placeId ? { ...place, photos: nextPhotos } : place))
+        prev.map((place) => {
+          const updated = analyzed.find((item) => item.id === place.id);
+          return updated ? { ...place, photos: updated.photos } : place;
+        })
       );
-      persistLoadedMapPlaces(nextPlaces);
+      persistLoadedMapPlaces(analyzed);
     } finally {
       setPhotoBusyPlaceId(null);
     }
@@ -594,7 +599,7 @@ export default function HomePage() {
     );
   };
 
-  const handleGenerateBlog = () => {
+  const handleGenerateBlog = async () => {
     if (displayedPlaces.length === 0) {
       setMapError('블로그를 만들 장소가 없습니다. 먼저 장소를 모으세요.');
       setMapNotice('');
@@ -606,16 +611,36 @@ export default function HomePage() {
     setIsBlogGenerating(true);
     setIsBlogOpen(true);
 
-    window.setTimeout(() => {
+    try {
+      const analyzed = await analyzePlacePhotos(displayedPlaces);
+      setPlaces(analyzed);
+      setManualPlaces((prev) =>
+        prev.map((place) => {
+          const updated = analyzed.find((item) => item.id === place.id);
+          return updated ? { ...place, photos: updated.photos } : place;
+        })
+      );
+      persistLoadedMapPlaces(analyzed);
+
       const draft = generateTravelBlogEssay({
         title: mapTitle.trim() || currentQuery.trim() || '우리들의 여행',
         memo: mapMemo,
         checklist: mapChecklist,
-        places: displayedPlaces,
+        places: analyzed,
       });
       setBlogDraft(draft);
+    } catch {
+      setBlogDraft(
+        generateTravelBlogEssay({
+          title: mapTitle.trim() || currentQuery.trim() || '우리들의 여행',
+          memo: mapMemo,
+          checklist: mapChecklist,
+          places: displayedPlaces,
+        })
+      );
+    } finally {
       setIsBlogGenerating(false);
-    }, 50);
+    }
   };
 
   const handleCopyBlog = async () => {
@@ -925,7 +950,7 @@ export default function HomePage() {
               disabled={isBlogGenerating}
               className="w-full mb-3 px-3 text-sm font-semibold text-white rounded-lg min-h-11 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
             >
-              {isBlogGenerating ? '블로그 작성 중...' : '블로그 생성'}
+              {isBlogGenerating ? '사진 읽고 작성 중...' : '블로그 생성'}
             </button>
             <div className="flex gap-2 mb-3 shrink-0">
               <button
@@ -1036,7 +1061,7 @@ export default function HomePage() {
               </button>
             </div>
             {isBlogGenerating || !blogDraft ? (
-              <p className="py-10 text-sm text-center text-slate-500">일정을 이야기로 옮기는 중입니다...</p>
+              <p className="py-10 text-sm text-center text-slate-500">사진을 읽고 이야기로 옮기는 중입니다...</p>
             ) : (
               <div className="flex flex-col min-h-0 overflow-y-auto">
                 <p className="mb-2 text-xs font-semibold text-slate-500">

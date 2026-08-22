@@ -41,6 +41,24 @@ function haystack(place: PlaceItem): string {
   return [place.name, place.memo ?? '', ...(place.types ?? [])].join(' ');
 }
 
+function sceneFromPhoto(
+  place: PlaceItem,
+  photo: PlacePhoto,
+  checklist: TravelMapChecklistItem[]
+): PhotoScene {
+  const aiScene = photo.analysis?.scene;
+  if (aiScene === 'food') return 'food';
+  if (aiScene === 'sunrise') return 'sunrise';
+  if (aiScene === 'sunset') return 'sunset';
+  if (aiScene === 'camping') return 'carcamping';
+  const subjects = (photo.analysis?.subjects ?? []).join(' ');
+  if (/카페|cafe|coffee/i.test(subjects)) return 'cafe';
+  if (/카니발|starex|캠핑카|차박|van/i.test(`${subjects} ${photo.analysis?.caption ?? ''}`)) {
+    return 'carcamping';
+  }
+  return classifyScene(place, checklist);
+}
+
 function classifyScene(place: PlaceItem, checklist: TravelMapChecklistItem[]): PhotoScene {
   const text = haystack(place);
   const checks = checklist.map((item) => `${item.id} ${item.text}`).join(' ');
@@ -72,7 +90,7 @@ function buildRoute(places: PlaceItem[], checklist: TravelMapChecklistItem[]): R
         marker: `[사진${photoNumber}]`,
         place,
         photo,
-        scene: classifyScene(place, checklist),
+        scene: sceneFromPhoto(place, photo, checklist),
         isFirstAtPlace: index === 0,
       });
     });
@@ -117,14 +135,25 @@ function stopParagraphs(stop: RouteStop, compact: boolean): string[] {
     ];
   }
 
+  const caption = stop.photo.analysis?.caption?.trim();
   const arrival = stop.isFirstAtPlace
     ? `${stop.place.name}에 닿았다. ${quoteMemo(stop.place.memo ?? '')}`.trim()
-    : `${stop.place.name}에서 다음 장면을 남겼다.`;
-  const beat = compact
-    ? `${stop.marker}\n${arrival}`
-    : `${stop.marker}\n${arrival} 그 순간의 공기는 설명이 짧아도 충분했다.`;
-  const emphasis = sceneParagraph(stop.scene, stop.place.name);
-  return emphasis ? [beat, emphasis] : [beat];
+    : '';
+  const seen = caption
+    ? `${stop.marker}\n${caption}`
+    : compact
+      ? `${stop.marker}\n${arrival || `${stop.place.name}에서 다음 장면을 남겼다.`}`
+      : `${stop.marker}\n${arrival || `${stop.place.name}에서 다음 장면을 남겼다.`} 그 순간의 공기는 설명이 짧아도 충분했다.`;
+  const extra: string[] = [];
+  if (caption && arrival && !caption.includes(stop.place.name)) extra.push(arrival);
+  if (!caption) {
+    const emphasis = sceneParagraph(stop.scene, stop.place.name);
+    if (emphasis) extra.push(emphasis);
+  } else if (stop.scene === 'carcamping' || stop.scene === 'sunrise' || stop.scene === 'sunset') {
+    const emphasis = sceneParagraph(stop.scene, stop.place.name);
+    if (emphasis && !caption.includes(emphasis.slice(0, 6))) extra.push(emphasis);
+  }
+  return [seen, ...extra];
 }
 
 function checklistParagraph(checklist: TravelMapChecklistItem[]): string {

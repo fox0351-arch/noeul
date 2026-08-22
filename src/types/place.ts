@@ -21,6 +21,23 @@ export interface PlaceItem {
 export interface PlacePhoto {
   id: string;
   dataUrl: string;
+  /** AI가 추정한 장면과 본문용 한 문장 */
+  analysis?: PhotoAiAnalysis;
+}
+
+export type PhotoAiScene =
+  | 'landscape'
+  | 'place'
+  | 'food'
+  | 'sunrise'
+  | 'sunset'
+  | 'camping'
+  | 'other';
+
+export interface PhotoAiAnalysis {
+  scene: PhotoAiScene;
+  caption: string;
+  subjects: string[];
 }
 
 export interface PlacesSearchResponse {
