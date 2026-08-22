@@ -81,24 +81,27 @@ export async function analyzePhotoWithAi(input: {
   dataUrl: string;
   placeName: string;
   placeMemo?: string;
-}): Promise<PhotoAiAnalysis | null> {
+}): Promise<{ analysis: PhotoAiAnalysis | null; notes: string[] }> {
   const parsed = parseDataUrl(input.dataUrl);
-  if (!parsed) return null;
+  const notes: string[] = [];
+  if (!parsed) return { analysis: null, notes: ['invalid-data-url'] };
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_PLACES_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey) return { analysis: null, notes: ['missing-api-key'] };
 
-  const fromGemini = await analyzeWithGemini(apiKey, parsed, input.placeName, input.placeMemo);
-  if (fromGemini) return fromGemini;
+  const fromGemini = await analyzeWithGemini(apiKey, parsed, input.placeName, input.placeMemo, notes);
+  if (fromGemini) return { analysis: fromGemini, notes };
 
-  return analyzeWithVision(apiKey, parsed.data, input.placeName);
+  const fromVision = await analyzeWithVision(apiKey, parsed.data, input.placeName, notes);
+  return { analysis: fromVision, notes };
 }
 
 async function analyzeWithGemini(
   apiKey: string,
   parsed: { mimeType: string; data: string },
   placeName: string,
-  placeMemo?: string
+  placeMemo: string | undefined,
+  notes: string[]
 ): Promise<PhotoAiAnalysis | null> {
   const prompt = `너는 60대 부부 여행 에세이를 돕는 사진 분석기다.
 사진에서 보이는 것을 추정해 JSON만 출력하라.
@@ -110,7 +113,7 @@ scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
 메모 힌트: ${placeMemo || '없음'}
 형식: {"scene":"place","caption":"...","subjects":["등대"]}`;
 
-  const models = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+  const models = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite'];
 
   for (const model of models) {
     try {
@@ -132,7 +135,10 @@ scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
           }),
         }
       );
-      if (!response.ok) continue;
+      if (!response.ok) {
+        notes.push(`${model}:${response.status}`);
+        continue;
+      }
       const payload = (await response.json()) as {
         candidates?: { content?: { parts?: { text?: string }[] } }[];
       };
@@ -142,7 +148,9 @@ scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
       const parsedJson: unknown = JSON.parse(jsonMatch[0]);
       const analysis = normalizeAnalysis(parsedJson);
       if (analysis) return analysis;
+      notes.push(`${model}:parse`);
     } catch {
+      notes.push(`${model}:error`);
       continue;
     }
   }
@@ -153,7 +161,8 @@ scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
 async function analyzeWithVision(
   apiKey: string,
   data: string,
-  placeName: string
+  placeName: string,
+  notes: string[]
 ): Promise<PhotoAiAnalysis | null> {
   try {
     const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
@@ -172,7 +181,10 @@ async function analyzeWithVision(
         ],
       }),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      notes.push(`vision:${response.status}`);
+      return null;
+    }
     const payload = (await response.json()) as {
       responses?: {
         labelAnnotations?: { description?: string }[];
@@ -188,6 +200,7 @@ async function analyzeWithVision(
     ].filter(Boolean);
     return analysisFromVisionLabels(labels, placeName);
   } catch {
+    notes.push('vision:error');
     return null;
   }
 }

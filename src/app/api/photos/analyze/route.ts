@@ -13,18 +13,18 @@ export async function POST(req: NextRequest) {
     }
 
     const slice = body.photos.slice(0, 8);
-    const results: { id: string; analysis: PhotoAiAnalysis | null }[] = [];
+    const results: { id: string; analysis: PhotoAiAnalysis | null; notes: string[] }[] = [];
 
     for (const photo of slice) {
       if (typeof photo.id !== 'string' || typeof photo.dataUrl !== 'string') {
         continue;
       }
-      const analysis = await analyzePhotoWithAi({
+      const outcome = await analyzePhotoWithAi({
         dataUrl: photo.dataUrl,
         placeName: typeof photo.placeName === 'string' ? photo.placeName : '',
         placeMemo: typeof photo.placeMemo === 'string' ? photo.placeMemo : undefined,
       });
-      results.push({ id: photo.id, analysis });
+      results.push({ id: photo.id, analysis: outcome.analysis, notes: outcome.notes });
     }
 
     return NextResponse.json({ results });
