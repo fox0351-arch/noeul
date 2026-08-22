@@ -1,5 +1,7 @@
-import { PlaceItem } from '@/types/place';
+import { PlaceItem, PlacePhoto } from '@/types/place';
 import { TravelMapChecklistItem } from '@/types/travelMap';
+
+export type PhotoScene = 'lodging' | 'carcamping' | 'food' | 'cafe' | 'sunrise' | 'sunset' | 'general';
 
 export interface TravelBlogDraft {
   title: string;
@@ -7,90 +9,175 @@ export interface TravelBlogDraft {
   hashtags: string[];
   markdown: string;
   charCount: number;
+  photoCount: number;
 }
 
 const MIN_CHARS = 1500;
 const MAX_CHARS = 2500;
 
+type RouteStop =
+  | {
+      kind: 'photo';
+      marker: string;
+      place: PlaceItem;
+      photo: PlacePhoto;
+      scene: PhotoScene;
+      isFirstAtPlace: boolean;
+    }
+  | {
+      kind: 'place';
+      place: PlaceItem;
+    };
+
 function slugTag(value: string): string {
-  const cleaned = value.replace(/[^\w가-힣]/g, '');
-  return cleaned.slice(0, 12);
+  return value.replace(/[^\w가-힣]/g, '').slice(0, 12);
 }
 
 function joinBody(paragraphs: string[]): string {
   return paragraphs.filter((p) => p.trim()).join('\n\n');
 }
 
-function trimToMax(body: string): string {
-  if (body.length <= MAX_CHARS) return body;
-  let cut = body.slice(0, MAX_CHARS);
-  const lastStop = Math.max(cut.lastIndexOf('다.'), cut.lastIndexOf('요.'), cut.lastIndexOf('다 '));
-  if (lastStop > MIN_CHARS) {
-    cut = cut.slice(0, lastStop + 2);
+function haystack(place: PlaceItem): string {
+  return [place.name, place.memo ?? '', ...(place.types ?? [])].join(' ');
+}
+
+function classifyScene(place: PlaceItem, checklist: TravelMapChecklistItem[]): PhotoScene {
+  const text = haystack(place);
+  const checks = checklist.map((item) => `${item.id} ${item.text}`).join(' ');
+  const combined = `${text} ${checks}`;
+
+  if (/일출|sunrise/i.test(text)) return 'sunrise';
+  if (/일몰|노을|sunset/i.test(text) && !/노을앱/.test(text)) return 'sunset';
+  if (/차박|캠핑|오토캠핑|campground|rv_park/i.test(combined)) return 'carcamping';
+  if (/숙박|숙소|호텔|펜션|모텔|게스트하우스|\blodging\b|\bhotel\b/i.test(combined)) return 'lodging';
+  if (/카페|\bcafe\b|coffee/i.test(text)) return 'cafe';
+  if (/맛집|식당|\brestaurant\b|\bfood\b/i.test(text)) return 'food';
+  return 'general';
+}
+
+function buildRoute(places: PlaceItem[], checklist: TravelMapChecklistItem[]): RouteStop[] {
+  const stops: RouteStop[] = [];
+  let photoNumber = 0;
+
+  for (const place of places) {
+    const photos = place.photos ?? [];
+    if (photos.length === 0) {
+      stops.push({ kind: 'place', place });
+      continue;
+    }
+    photos.forEach((photo, index) => {
+      photoNumber += 1;
+      stops.push({
+        kind: 'photo',
+        marker: `[사진${photoNumber}]`,
+        place,
+        photo,
+        scene: classifyScene(place, checklist),
+        isFirstAtPlace: index === 0,
+      });
+    });
   }
-  return cut.trim();
+
+  return stops;
 }
 
-function extraReflections(input: {
-  title: string;
-  places: PlaceItem[];
-  memo: string;
-  checklist: TravelMapChecklistItem[];
-}): string[] {
-  const names = input.places.map((place) => place.name);
-  const first = names[0];
-  const last = names[names.length - 1];
-  const photoTotal = input.places.reduce((sum, place) => sum + (place.photos?.length ?? 0), 0);
-  const done = input.checklist.filter((item) => item.completed).map((item) => item.text);
-  const pending = input.checklist.filter((item) => !item.completed).map((item) => item.text);
-  const memoBits = input.memo.trim();
+function quoteMemo(memo: string): string {
+  const trimmed = memo.trim();
+  if (!trimmed) return '';
+  const clipped = trimmed.length > 90 ? `${trimmed.slice(0, 90)}…` : trimmed;
+  return `수첩에는 이렇게 남아 있다. "${clipped}"`;
+}
 
-  return [
-    `우리는 더 이상 많이 보는 여행을 하지 않는다. ${input.title}에서도 욕심을 부리지 않고, 발걸음이 가는 곳에만 머물렀다. 같은 풍경을 두 번 바라보는 시간이 오히려 기억에 더 오래 남았다.`,
+function sceneParagraph(scene: PhotoScene, placeName: string): string {
+  switch (scene) {
+    case 'lodging':
+      return `숙소에 가방을 내려놓았다. ${placeName}의 밤은 설명이 필요 없었다. 불을 끄면 하루가 잠시 멈출 뿐이었다.`;
+    case 'carcamping':
+      return `차 문을 닫고 자리를 잡았다. 차박은 편리해서가 아니라, 하늘이 가까워서 오래 기억에 남을 밤이었다.`;
+    case 'food':
+      return `식탁 앞에 앉았다. 간판의 이름보다, 천천히 나눠 먹은 시간이 남았다.`;
+    case 'cafe':
+      return `창가에 잔을 내려놓았다. 말은 줄고, 창밖의 움직임만 천천히 지나갔다.`;
+    case 'sunrise':
+      return `일출을 기다렸다. 서둘러 담으려 하지 않고, 빛이 발끝까지 내려올 때까지 서 있었다.`;
+    case 'sunset':
+      return `일몰 앞에 우리는 말이 없었다. 하늘이 바뀌는 동안, 서로의 옆모습만 분명했다.`;
+    default:
+      return '';
+  }
+}
+
+function stopParagraphs(stop: RouteStop, compact: boolean): string[] {
+  if (stop.kind === 'place') {
+    const memo = quoteMemo(stop.place.memo ?? '');
+    return [
+      compact
+        ? `${stop.place.name}을(를) 지나쳤다. 사진은 남기지 않았다. ${memo}`.trim()
+        : `${stop.place.name}을(를) 걸었다. 셔터를 누르지 않은 자리도 동선의 일부였다. 천천히 걸어도 괜찮은 길이었다. ${memo}`.trim(),
+    ];
+  }
+
+  const arrival = stop.isFirstAtPlace
+    ? `${stop.place.name}에 닿았다. ${quoteMemo(stop.place.memo ?? '')}`.trim()
+    : `${stop.place.name}에서 다음 장면을 남겼다.`;
+  const beat = compact
+    ? `${stop.marker}\n${arrival}`
+    : `${stop.marker}\n${arrival} 그 순간의 공기는 설명이 짧아도 충분했다.`;
+  const emphasis = sceneParagraph(stop.scene, stop.place.name);
+  return emphasis ? [beat, emphasis] : [beat];
+}
+
+function checklistParagraph(checklist: TravelMapChecklistItem[]): string {
+  if (checklist.length === 0) return '';
+  const done = checklist.filter((item) => item.completed).map((item) => item.text);
+  const pending = checklist.filter((item) => !item.completed).map((item) => item.text);
+  const doneLine = done.length ? `미리 적어 둔 ${done.join(', ')}을(를) 지나왔다.` : '';
+  const pendingLine = pending.length
+    ? `아직 남은 ${pending.join(', ')}은(는) 숙제처럼 가방에 두었다.`
+    : '';
+  return `우리는 서두르지 않았다. ${doneLine} ${pendingLine}`.trim();
+}
+
+function buildSeoTags(tripName: string, places: PlaceItem[], scenes: PhotoScene[]): string[] {
+  const tags: string[] = [];
+  const push = (value: string) => {
+    const tag = slugTag(value);
+    if (tag && !tags.includes(tag)) tags.push(tag);
+  };
+
+  push('부부여행');
+  push('60대여행');
+  push('여행에세이');
+  push('느린여행');
+  push(tripName);
+  if (scenes.includes('sunset')) push('일몰여행');
+  if (scenes.includes('sunrise')) push('일출여행');
+  if (scenes.includes('lodging')) push('숙소기록');
+  if (scenes.includes('carcamping')) push('차박여행');
+  if (scenes.includes('cafe')) push('카페산책');
+  if (scenes.includes('food')) push('식탁기록');
+  places.forEach((place) => push(place.name));
+  ['국내여행', '기록여행', '둘이서여행', '손잡고여행', '산책여행', '노을여행', '여행일기'].forEach(push);
+
+  return tags.slice(0, 10).map((tag) => `#${tag}`);
+}
+
+function extraReflections(tripName: string, places: PlaceItem[], memo: string): string[] {
+  const first = places[0]?.name;
+  const last = places[places.length - 1]?.name;
+  const extras = [
+    '천천히 걸어도 괜찮은 길이었다. 속도를 줄이니 발밑의 작은 소리까지 들렸다.',
+    '오늘은 풍경보다 사람이 더 기억에 남았다. 아내의 걸음이 내 걸음보다 반 박자 느렸고, 그 간격이 편했다.',
+    memo.trim()
+      ? `여행 전에 적어 둔 메모를 다시 읽었다. ${memo.trim().slice(0, 100)}${memo.trim().length > 100 ? '…' : ''}`
+      : '적어 둔 문장이 많지 않아도, 둘이 나눈 침묵이 하루를 채워 주었다.',
     first && last && first !== last
-      ? `${first}에서 시작된 하루가 ${last}에 닿을 무렵, 아내는 물병을 흔들어 보이며 웃었다. 멀리 가지 않아도 충분한 날이었다.`
-      : `천천히 걷다 보니 시계를 보지 않아도 마음이 먼저 저녁을 알고 있었다.`,
-    photoTotal > 0
-      ? `숙소에 돌아와 오늘 남긴 사진 ${photoTotal}장을 함께 넘겼다. 잘 나온 장면보다, 우리가 그 자리에 있었다는 사실이 더 소중했다.`
-      : `사진을 많이 남기지 못한 날도 있다. 그래도 둘이 나눈 말들이 곧 앨범이 되었다.`,
-    memoBits
-      ? `수첩에 적어 둔 말을 다시 읽으니 그때의 바람과 발자국이 선명하다. "${memoBits.slice(0, 80)}${memoBits.length > 80 ? '…' : ''}" 이 한 줄이 오늘의 중심이었다.`
-      : `특별한 계획을 세우지 않아도, 둘이 보조를 맞추는 일 자체가 여행이었다.`,
-    done.length
-      ? `미리 ${done.slice(0, 3).join(', ')}을(를) 해 둔 덕분에 길을 헤매지 않았다. 나이를 먹을수록 준비는 낭만을 해치지 않고, 오히려 여유를 만든다.`
-      : `즉흥으로 나선 길이었지만, 서로를 챙기는 습관만큼은 예전과 같았다.`,
-    pending.length
-      ? `미처 다하지 못한 ${pending.slice(0, 2).join(', ')}은(는) 아쉬움으로 남긴다. 다음에 오면 그때의 숙제가 또 다른 핑계가 되리라.`
-      : `오늘은 챙긴 것들을 대부분 해냈다. 그 사실이 발끝을 가볍게 했다.`,
-    `60대를 지나며 우리는 풍경보다 속도를 먼저 고르게 되었다. 누군가에게는 평범한 코스일지 몰라도, 우리 부부에게는 오래 간직할 하루의 문장이다.`,
-    `돌아가는 차 안에서 아내는 창밖을 보다가 짧게 말했다. 내일은 더 천천히 걷자고. 나는 대답 대신 손을 잡아 드렸다.`,
-    names.length >= 3
-      ? `${names.slice(0, 3).join(', ')}을(를) 이어서 걸으니 지도 위의 점들이 하나의 이야기로 붙었다. 순서를 바꿔 보지 않은 것이 오히려 잘한 일이었다.`
-      : `짧은 동선이었기에 숨이 차지 않았고, 그만큼 서로를 더 자주 바라볼 수 있었다.`,
-  ].filter((line): line is string => Boolean(line));
-}
-
-function placeNarration(place: PlaceItem, index: number, total: number): string {
-  const order =
-    index === 0 ? '첫 발걸음은' : index === total - 1 ? '마지막 장소는' : `${index + 1}번째로 향한 곳은`;
-  const rating =
-    typeof place.rating === 'number'
-      ? `사람들이 남긴 별점은 ${place.rating}점이었지만, 숫자보다 눈앞의 공기가 먼저 말을 걸었다.`
-      : `유명한 점수표보다, 우리 둘이 느낀 온도가 더 정확했다.`;
-  const memo = place.memo?.trim();
-  const memoLine = memo
-    ? `수첩에는 이렇게 적어 두었다. "${memo}" 나중에 읽어도 그 순간의 숨결이 남아 있을 문장이다.`
-    : `따로 적을 말은 짧았지만, 어깨를 나란히 하고 선 시간이 곧 기록이었다.`;
-  const photoCount = place.photos?.length ?? 0;
-  const photoLine =
-    photoCount > 0
-      ? `이곳에 남긴 사진이 ${photoCount}장이다. 아내의 뒷모습, 발밑의 그림자, 바람에 흔들린 가장자리까지 허투루 버리지 않았다.`
-      : `셔터를 많이 누르지 않았다. 눈으로 오래 담아 두는 쪽을 택했다.`;
-  const address = place.address?.trim()
-    ? `${place.address} 근처를 천천히 걸으며, 이정표보다 발바닥의 감촉을 믿었다.`
-    : `주소보다 풍경이 먼저 우리를 안내했다.`;
-
-  return `${order} ${place.name}였다. ${address} ${rating} ${memoLine} ${photoLine}`;
+      ? `${first}에서 시작한 발걸음이 ${last}에 닿을 때까지, 우리는 순서를 바꾸지 않았다. 찍힌 사진의 앞뒤가 곧 오늘의 지도였다.`
+      : '같은 자리를 오래 바라보는 일이, 멀리 가는 일보다 먼저였다.',
+    `${tripName}을(를) 크게 말하지 않기로 했다. 다만 손끝을 맞댄 채로, 하루를 접었다.`,
+    '돌아가는 길에도 서두르지 않았다. 창밖의 빛이 줄어드는 것을 그냥 두었다.',
+  ];
+  return extras;
 }
 
 export function generateTravelBlogEssay(input: {
@@ -101,92 +188,80 @@ export function generateTravelBlogEssay(input: {
 }): TravelBlogDraft {
   const tripName = input.title.trim() || '우리들의 여행';
   const places = input.places;
-  const title = `${tripName}, 둘이서 천천히 걸은 하루`;
+  const route = buildRoute(places, input.checklist);
+  const photoStops = route.filter((stop): stop is Extract<RouteStop, { kind: 'photo' }> => stop.kind === 'photo');
+  const scenes = photoStops.map((stop) => stop.scene);
+
+  const title = `우리는 서두르지 않았다, ${tripName}`;
 
   const opening = [
-    `우리는 서두르지 않기로 했다. ${tripName}이라는 이름만 가방에 넣고, 아침 공기를 먼저 마셨다.`,
-    `60대를 지나온 부부에게 여행은 더 이상 정복이 아니다. 서로의 걸음 속도를 맞추는 일이고, 같은 풍경을 다른 마음으로 바라보는 일이다.`,
+    '우리는 서두르지 않았다.',
+    `${tripName}이라는 이름만 가방에 넣고, 사진이 쌓인 순서대로 걸었다. 그 순서를 바꾸지 않는 일이 곧 오늘의 동선이었다.`,
     input.memo.trim()
-      ? `떠나기 전 적어 둔 여행 메모가 오늘의 나침반이 되었다. ${input.memo.trim()}`
-      : `거창한 일정표 대신, 발길이 머무는 곳을 차례로 이으며 하루를 쌓아 올렸다.`,
+      ? `떠나기 전 적어 둔 여행 메모가 옆자리에 있었다. ${input.memo.trim()}`
+      : '거창한 말 대신, 발걸음이 남는 자리를 그대로 따라갔다.',
   ];
 
-  const checklistIntro = (() => {
-    if (input.checklist.length === 0) return '';
-    const done = input.checklist.filter((item) => item.completed).map((item) => item.text);
-    const pending = input.checklist.filter((item) => !item.completed).map((item) => item.text);
-    const doneLine = done.length ? `이미 표시해 둔 일은 ${done.join(', ')}이다.` : '아직 완료 표시는 많지 않았다.';
-    const pendingLine = pending.length
-      ? `남은 ${pending.join(', ')}은(는) 길 위에서 천천히 채우기로 했다.`
-      : '준비 목록은 거의 비어 마음까지 가벼웠다.';
-    return `여행 전에 적어 둔 작은 숙제들이 있었다. ${doneLine} ${pendingLine} 그런 사소한 확인이 있어야 풍경을 더 오래 바라볼 수 있다.`;
-  })();
+  const compact = photoStops.length >= 8;
+  const routeParagraphs = route.flatMap((stop) => stopParagraphs(stop, compact));
+  const closing = '오늘은 풍경보다 사람이 더 기억에 남았다. 내일은 더 천천히 걷자고, 아내는 짧게 말했다.';
 
-  const placeParagraphs = places.map((place, index) => placeNarration(place, index, places.length));
+  const extras = extraReflections(tripName, places, input.memo);
+  const core = [...opening, checklistParagraph(input.checklist), ...routeParagraphs];
 
-  const closing = `하루를 접으며 나는 아내에게 물었다. 내일도 이렇게 걸어 볼까. 대답은 짧았고, 미소는 길었다. ${tripName}의 기억은 명소의 목록이 아니라, 둘이 나란히 선 시간의 결이다.`;
+  let middle = [...core];
+  let body = joinBody([...middle, closing]);
 
-  let paragraphs = [...opening, checklistIntro, ...placeParagraphs, closing];
-  let body = joinBody(paragraphs);
-
-  const extras = extraReflections({
-    title: tripName,
-    places,
-    memo: input.memo,
-    checklist: input.checklist,
-  });
-  let extraIndex = 0;
-  while (body.length < MIN_CHARS && extraIndex < extras.length) {
-    paragraphs = [...paragraphs.slice(0, -1), extras[extraIndex], closing];
-    body = joinBody(paragraphs);
-    extraIndex += 1;
+  for (const extra of extras) {
+    if (body.length >= MIN_CHARS) break;
+    const next = joinBody([...middle, extra, closing]);
+    if (next.length > MAX_CHARS) break;
+    middle = [...middle, extra];
+    body = next;
   }
 
-  while (body.length < MIN_CHARS) {
-    paragraphs = [
-      ...paragraphs.slice(0, -1),
-      `같은 길을 되짚으며 우리는 말이 줄었다. 침묵 속에서도 발소리가 대화를 대신했고, ${tripName}의 하루는 그렇게 천천히 깊어졌다.`,
-      closing,
-    ];
-    body = joinBody(paragraphs);
-    if (body.length > MAX_CHARS) break;
-  }
-
-  body = trimToMax(body);
   if (body.length < MIN_CHARS) {
-    body = `${body}\n\n우리는 오늘을 자랑하지 않기로 했다. 다만 오래 기억하기로 했다.`.slice(0, MAX_CHARS);
+    const pad = '같은 길을 되짚으며 우리는 말이 줄었다. 침묵 속에서도 발소리가 남았고, 그 소리가 하루의 끝이 되었다.';
+    const next = joinBody([...middle, pad, closing]);
+    if (next.length <= MAX_CHARS) body = next;
   }
 
-  const tags = new Set<string>(['부부여행', '60대여행', '여행에세이', '노을여행', slugTag(tripName)].filter(Boolean));
-  places.forEach((place) => {
-    const tag = slugTag(place.name);
-    if (tag) tags.add(tag);
-  });
-  const hashtags = [...tags].slice(0, 10).map((tag) => `#${tag}`);
+  if (body.length > MAX_CHARS) {
+    const parts = body.split('\n\n');
+    while (joinBody(parts).length > MAX_CHARS && parts.length > 3) {
+      const removable = [...parts].reverse().findIndex((part) => !part.includes('[사진'));
+      if (removable < 0) break;
+      parts.splice(parts.length - 1 - removable, 1);
+    }
+    body = joinBody(parts).slice(0, MAX_CHARS).trim();
+  }
 
-  const markdownSections = [
+  const hashtags = buildSeoTags(tripName, places, scenes);
+
+  const markdown = [
     `# ${title}`,
     '',
     body,
     '',
-    ...places.flatMap((place, index) => {
-      const photos = place.photos ?? [];
-      if (photos.length === 0) return [] as string[];
-      return [
-        `## ${index + 1}. ${place.name} 사진`,
-        ...photos.map((photo, photoIndex) => `![${place.name} ${photoIndex + 1}](${photo.dataUrl})`),
-        '',
-      ];
-    }),
-    '## 해시태그',
+    ...(photoStops.length
+      ? [
+          '## 사진 (첨부 순서)',
+          ...photoStops.map(
+            (stop) => `${stop.marker} ${stop.place.name}\n\n![${stop.marker}](${stop.photo.dataUrl})`
+          ),
+        ]
+      : []),
+    '',
+    '## SEO 태그',
     hashtags.join(' '),
-  ];
+  ].join('\n');
 
   return {
     title,
     body,
     hashtags,
-    markdown: markdownSections.join('\n'),
+    markdown,
     charCount: body.length,
+    photoCount: photoStops.length,
   };
 }

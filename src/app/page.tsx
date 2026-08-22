@@ -623,7 +623,7 @@ export default function HomePage() {
     const text = `${blogDraft.title}\n\n${blogDraft.body}\n\n${blogDraft.hashtags.join(' ')}`;
     try {
       await navigator.clipboard.writeText(text);
-      setBlogCopyNotice('제목, 본문, 해시태그를 복사했습니다.');
+      setBlogCopyNotice('제목, 본문, SEO 태그를 복사했습니다.');
     } catch {
       setBlogCopyNotice('복사에 실패했습니다. 본문을 길게 눌러 복사해 주세요.');
     }
@@ -1022,7 +1022,9 @@ export default function HomePage() {
             <div className="flex items-start justify-between gap-3 mb-3">
               <div className="min-w-0">
                 <h2 className="text-base font-bold text-slate-800">여행 에세이 블로그</h2>
-                <p className="mt-1 text-xs text-slate-500">60대 부부 여행자의 나레이션 초안입니다.</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  첨부 사진 순서를 동선으로 쓴 60대 부부 나레이션입니다.
+                </p>
               </div>
               <button
                 type="button"
@@ -1039,10 +1041,12 @@ export default function HomePage() {
               <div className="flex flex-col min-h-0 overflow-y-auto">
                 <p className="mb-2 text-xs font-semibold text-slate-500">
                   본문 {blogDraft.charCount}자
+                  {blogDraft.photoCount > 0 ? ` · 사진 ${blogDraft.photoCount}장 순서` : ''}
                 </p>
                 <h3 className="mb-3 text-lg font-bold text-slate-900">{blogDraft.title}</h3>
                 <div className="text-base leading-7 whitespace-pre-wrap text-slate-800">{blogDraft.body}</div>
-                <p className="mt-4 text-sm text-amber-800">{blogDraft.hashtags.join(' ')}</p>
+                <p className="mt-4 text-xs font-semibold text-slate-500">SEO 태그 10개</p>
+                <p className="mt-1 text-sm text-amber-800">{blogDraft.hashtags.join(' ')}</p>
                 {blogCopyNotice && <p className="mt-2 text-xs text-slate-600">{blogCopyNotice}</p>}
               </div>
             )}
