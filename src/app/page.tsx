@@ -37,6 +37,7 @@ export default function HomePage() {
   const shouldScrollToPlaceList = useRef(false);
   const [placeDetails, setPlaceDetails] = useState<PlaceDetails | null>(null);
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState('');
   const [memoOpenPlaceId, setMemoOpenPlaceId] = useState<string | null>(null);
 
   const displayedPlaces = useMemo(() => {
