@@ -121,51 +121,41 @@ scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
 형식: {"scene":"place","caption":"...","subjects":["등대"]}`;
 
   const models = await listGeminiModels(apiKey, notes);
+  const versions = ['v1beta', 'v1'] as const;
 
   for (const model of models) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: prompt },
-                  { inlineData: { mimeType: parsed.mimeType, data: parsed.data } },
-                ],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.3,
-              maxOutputTokens: 256,
-              responseMimeType: 'application/json',
-            },
-          }),
-        }
-      );
-      if (!response.ok) {
-        notes.push(`${model}:${response.status}`);
-        continue;
+    for (const version of versions) {
+      const first = await requestGeminiAnalysis({
+        apiKey,
+        model,
+        version,
+        asJson: false,
+        prompt,
+        parsed,
+      });
+      if (first.ok === false) {
+        notes.push(`${version}/${model}:${first.status}`);
+        if (first.status === 404) continue;
+        break;
       }
-      const payload = (await response.json()) as {
-        candidates?: { content?: { parts?: { text?: string }[] } }[];
-      };
-      const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || '';
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        notes.push(`${model}:empty`);
-        continue;
+      if (first.analysis) return first.analysis;
+      notes.push(`${version}/${model}:${first.note}`);
+
+      const second = await requestGeminiAnalysis({
+        apiKey,
+        model,
+        version,
+        asJson: true,
+        prompt,
+        parsed,
+      });
+      if (second.ok === false) {
+        notes.push(`${version}/${model}:json:${second.status}`);
+        break;
       }
-      const parsedJson: unknown = JSON.parse(jsonMatch[0]);
-      const analysis = normalizeAnalysis(parsedJson);
-      if (analysis) return analysis;
-      notes.push(`${model}:parse`);
-    } catch {
-      notes.push(`${model}:error`);
-      continue;
+      if (second.analysis) return second.analysis;
+      notes.push(`${version}/${model}:json:${second.note}`);
+      break;
     }
   }
 
@@ -195,14 +185,14 @@ async function listGeminiModels(apiKey: string, notes: string[]): Promise<string
     const names = (payload.models ?? [])
       .filter((model) => (model.supportedGenerationMethods ?? []).includes('generateContent'))
       .map((model) => (model.name || '').replace(/^models\//, ''))
-      .filter(Boolean);
+      .filter((name) => name && !/tts|image|embed|imagen|veo|audio/i.test(name));
     const ranked = names.sort((a, b) => scoreModel(a) - scoreModel(b));
     if (ranked.length === 0) {
       notes.push('models:empty');
       return fallback;
     }
     notes.push(`models:${ranked[0]}`);
-    return ranked.slice(0, 6);
+    return ranked.slice(0, 4);
   } catch {
     notes.push('models:error');
     return fallback;
@@ -211,10 +201,82 @@ async function listGeminiModels(apiKey: string, notes: string[]): Promise<string
 
 function scoreModel(name: string): number {
   const lower = name.toLowerCase();
-  if (lower.includes('flash') && !lower.includes('lite')) return 0;
-  if (lower.includes('flash')) return 1;
-  if (lower.includes('pro')) return 2;
-  return 3;
+  if (lower.includes('flash-latest')) return -1;
+  if (lower.includes('flash') && lower.includes('preview') && !lower.includes('image')) return 0;
+  if (lower.includes('flash') && !lower.includes('lite')) return 1;
+  if (lower.includes('flash')) return 2;
+  if (lower.includes('pro')) return 3;
+  return 4;
+}
+
+type GeminiRequestResult =
+  | { ok: false; status: number }
+  | { ok: true; analysis: PhotoAiAnalysis | null; note: string };
+
+async function requestGeminiAnalysis(input: {
+  apiKey: string;
+  model: string;
+  version: 'v1beta' | 'v1';
+  asJson: boolean;
+  prompt: string;
+  parsed: { mimeType: string; data: string };
+}): Promise<GeminiRequestResult> {
+  try {
+    const generationConfig: Record<string, unknown> = {
+      temperature: 0.3,
+      maxOutputTokens: 2048,
+    };
+    if (input.asJson) generationConfig.responseMimeType = 'application/json';
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/${input.version}/models/${input.model}:generateContent?key=${input.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: input.prompt },
+                { inlineData: { mimeType: input.parsed.mimeType, data: input.parsed.data } },
+              ],
+            },
+          ],
+          generationConfig,
+        }),
+      }
+    );
+    if (!response.ok) return { ok: false, status: response.status };
+
+    const payload = (await response.json()) as {
+      promptFeedback?: { blockReason?: string };
+      candidates?: {
+        finishReason?: string;
+        content?: { parts?: { text?: string }[] };
+      }[];
+    };
+    const block = payload.promptFeedback?.blockReason;
+    const finish = payload.candidates?.[0]?.finishReason || 'none';
+    const text =
+      payload.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return {
+        ok: true,
+        analysis: null,
+        note: `empty:${block || finish}:len${text.length}`,
+      };
+    }
+    try {
+      const analysis = normalizeAnalysis(JSON.parse(jsonMatch[0]));
+      if (analysis) return { ok: true, analysis, note: 'ok' };
+      return { ok: true, analysis: null, note: 'parse' };
+    } catch {
+      return { ok: true, analysis: null, note: 'json' };
+    }
+  } catch {
+    return { ok: true, analysis: null, note: 'error' };
+  }
 }
 
 async function analyzeWithVision(
