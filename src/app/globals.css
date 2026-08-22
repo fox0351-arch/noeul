@@ -121,4 +121,8 @@ body {
   .place-list-toggle {
     min-height: 44px;
   }
+
+  .workspace-saved {
+    flex: none;
+  }
 }

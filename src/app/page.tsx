@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { PlaceDetails, PlaceItem, PlaceLocation, PlacesSearchResponse } from '@/types/place';
 import { generateKML, downloadKmlFile } from '@/lib/kmlBuilder';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
-import { createTravelMapId, deleteTravelMap, loadTravelMaps, saveTravelMap, updateTravelMap } from '@/lib/travelMapStorage';
+import { createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap } from '@/lib/travelMapStorage';
 import { TravelMap } from '@/types/travelMap';
 import GoogleMapViewer from '@/components/GoogleMapViewer';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
@@ -33,6 +33,7 @@ export default function HomePage() {
   const [isPlaceListCollapsed, setIsPlaceListCollapsed] = useState(false);
   const [placeListToggledByUser, setPlaceListToggledByUser] = useState(false);
   const placeListSectionRef = useRef<HTMLDivElement>(null);
+  const backupFileInputRef = useRef<HTMLInputElement>(null);
   const shouldScrollToPlaceList = useRef(false);
   const [placeDetails, setPlaceDetails] = useState<PlaceDetails | null>(null);
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
@@ -216,16 +217,19 @@ export default function HomePage() {
     }
   };
 
-  const handleDeleteManualPlace = (placeId: string) => {
-    if (loadedMapId) {
-      setPlaces((prev) => prev.filter((place) => place.id !== placeId));
-    } else {
-      setPlaces((prev) =>
-        prev.filter((place) => !(place.id === placeId && place.addedManually))
-      );
-    }
+  const handleDeletePlace = (placeId: string) => {
+    setPlaces((prev) => prev.filter((place) => place.id !== placeId));
     setManualPlaces((prev) => prev.filter((place) => place.id !== placeId));
     setSelectedPlaceId((current) => (current === placeId ? null : current));
+
+    if (loadedMapId) {
+      const updated = removePlaceFromTravelMap(loadedMapId, placeId);
+      if (updated) {
+        setTravelMaps(updated);
+        setMapNotice('선택한 장소를 여행지도에서 삭제했습니다.');
+        setMapError('');
+      }
+    }
   };
 
   const handleDownloadKml = () => {
@@ -300,6 +304,75 @@ export default function HomePage() {
     }
     setMapError('');
     setMapNotice(`'${map.title}' 여행지도를 불러왔습니다.`);
+  };
+
+  const handleBackupTravelMaps = () => {
+    const json = exportTravelMapBackupJson();
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const filename = `noeul-backup-${year}-${month}-${day}.json`;
+
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+
+    setMapError('');
+    setMapNotice('여행지도를 백업 파일로 저장했습니다.');
+  };
+
+  const handleRestoreTravelMapsClick = () => {
+    backupFileInputRef.current?.click();
+  };
+
+  const handleRestoreTravelMapsFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    const confirmed = window.confirm('현재 저장된 여행지도를 덮어쓸까요?');
+    if (!confirmed) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = typeof reader.result === 'string' ? reader.result : '';
+        const parsed: unknown = JSON.parse(text);
+        const restored = restoreTravelMapsFromBackup(parsed);
+
+        if (!restored) {
+          setMapNotice('');
+          setMapError('올바른 백업 파일이 아닙니다.');
+          return;
+        }
+
+        setTravelMaps(restored);
+        setSelectedSavedMapId((current) =>
+          current && restored.some((map) => map.id === current) ? current : null
+        );
+        setLoadedMapId((current) =>
+          current && restored.some((map) => map.id === current) ? current : null
+        );
+        setMapError('');
+        setMapNotice(`여행지도 ${restored.length}개를 복원했습니다.`);
+        window.alert('여행지도를 복원했습니다.');
+      } catch {
+        setMapNotice('');
+        setMapError('올바른 백업 파일이 아닙니다.');
+      }
+    };
+    reader.onerror = () => {
+      setMapNotice('');
+      setMapError('올바른 백업 파일이 아닙니다.');
+    };
+    reader.readAsText(file);
   };
 
   const handleDeleteTravelMap = (map: TravelMap) => {
@@ -435,19 +508,17 @@ export default function HomePage() {
                         {place.rating && (
                           <span className="text-xs font-bold text-amber-500">★ {place.rating}</span>
                         )}
-                        {(place.addedManually || loadedMapId) && (
-                          <button
-                            type="button"
-                            aria-label={`${place.name} 삭제`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteManualPlace(place.id);
-                            }}
-                            className="flex items-center justify-center text-sm font-bold text-orange-600 rounded w-9 h-9 md:w-6 md:h-6 md:text-xs hover:bg-orange-100"
-                          >
-                            X
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          aria-label={`${place.name} 삭제`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeletePlace(place.id);
+                          }}
+                          className="flex items-center justify-center text-sm font-bold text-slate-500 rounded w-9 h-9 md:w-6 md:h-6 md:text-xs hover:bg-red-50 hover:text-red-600"
+                        >
+                          X
+                        </button>
                       </div>
                     </div>
                     <p className="mt-1 text-xs text-slate-500 line-clamp-1">{place.address}</p>
@@ -458,17 +529,31 @@ export default function HomePage() {
             </div>
           </div>
 
-        <div className="relative w-full min-h-0 workspace-map map-pane">
-          <GoogleMapViewer
-            center={center}
-            places={displayedPlaces}
-            selectedPlaceId={selectedPlaceId}
-            onSelectPlace={(id) => setSelectedPlaceId(id)}
-          />
-        </div>
-
           <div className="p-3 overflow-y-auto border-t workspace-saved md:p-4 border-slate-200 bg-slate-50/80">
             <h2 className="mb-2 text-sm font-bold text-slate-800">내 여행지도</h2>
+            <input
+              ref={backupFileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={handleRestoreTravelMapsFile}
+            />
+            <div className="flex gap-2 mb-3 shrink-0">
+              <button
+                type="button"
+                onClick={handleBackupTravelMaps}
+                className="flex-1 px-3 text-sm font-semibold text-amber-900 bg-amber-100 border border-amber-300 rounded-lg min-h-11 hover:bg-amber-200"
+              >
+                여행지도 백업
+              </button>
+              <button
+                type="button"
+                onClick={handleRestoreTravelMapsClick}
+                className="flex-1 px-3 text-sm font-semibold text-white rounded-lg min-h-11 bg-slate-700 hover:bg-slate-800"
+              >
+                여행지도 복원
+              </button>
+            </div>
             <form onSubmit={handleSaveTravelMap} className="mb-3">
               <label className="block mb-1 text-xs font-semibold text-slate-500">여행지도 이름</label>
               <div className="flex gap-2">
@@ -535,6 +620,15 @@ export default function HomePage() {
               </div>
             )}
           </div>
+
+        <div className="relative w-full min-h-0 workspace-map map-pane">
+          <GoogleMapViewer
+            center={center}
+            places={displayedPlaces}
+            selectedPlaceId={selectedPlaceId}
+            onSelectPlace={(id) => setSelectedPlaceId(id)}
+          />
+        </div>
       </div>
       {selectedPlace && (
         <PlaceDetailCard

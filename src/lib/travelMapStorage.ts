@@ -116,6 +116,54 @@ export function deleteTravelMap(id: string): TravelMap[] {
   return next.maps;
 }
 
+export function removePlaceFromTravelMap(mapId: string, placeId: string): TravelMap[] | null {
+  const store = readStore();
+  if (!store.maps.some((map) => map.id === mapId)) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const next: TravelMapStore = {
+    version: 1,
+    maps: store.maps.map((map) =>
+      map.id === mapId
+        ? {
+            ...map,
+            places: map.places.filter((place) => place.id !== placeId),
+            updatedAt: now,
+          }
+        : map
+    ),
+  };
+  writeStore(next);
+  return next.maps;
+}
+
 export function createTravelMapId(): string {
   return `map_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function parseBackupStore(value: unknown): TravelMapStore | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const record = value as { version?: unknown; maps?: unknown };
+  if (record.version !== 1 || !Array.isArray(record.maps)) return null;
+  if (!record.maps.every(isTravelMap)) return null;
+
+  return {
+    version: 1,
+    maps: record.maps,
+  };
+}
+
+export function exportTravelMapBackupJson(): string {
+  return JSON.stringify(readStore(), null, 2);
+}
+
+export function restoreTravelMapsFromBackup(value: unknown): TravelMap[] | null {
+  const store = parseBackupStore(value);
+  if (!store) return null;
+
+  writeStore(store);
+  return store.maps;
 }
