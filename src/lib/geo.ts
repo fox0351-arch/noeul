@@ -95,11 +95,15 @@ export function bearingDegrees(from: PlaceLocation, to: PlaceLocation): number {
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
-export const OFF_ROUTE_THRESHOLD_M = 20;
+export const OFF_ROUTE_THRESHOLD_M = 30;
 export const FAR_OFF_ROUTE_THRESHOLD_M = 50;
 export const WRONG_WAY_OFF_ROUTE_THRESHOLD_M = 100;
+export const OFF_ROUTE_HOLD_MS = 5000;
 export const WEAK_GPS_ACCURACY_M = 30;
-export const MAX_ACCEPT_GPS_ACCURACY_M = 35;
+export const GPS_OK_ACCURACY_M = 15;
+export const MAX_ACCEPT_GPS_ACCURACY_M = 40;
+export const GPS_JUMP_MIN_M = 28;
+export const GPS_JUMP_MAX_MPS = 5;
 export const GPS_SMOOTH_COUNT = 5;
 export const MIN_HEADING_MOVE_M = 3;
 export const MIN_MAP_ROTATE_KMH = 1;

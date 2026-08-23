@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
 import { PlaceItem, PlaceLocation } from '@/types/place';
+import { destinationPoint } from '@/lib/geo';
 
 const USER_MARKER_SCALE = 12;
 /** 현재 위치의 약 1.5배 */
@@ -12,9 +13,7 @@ const ROUTE_STROKE_WEIGHT = 6;
 const ROUTE_STROKE_OPACITY = 0.7;
 const RETURN_STROKE_COLOR = '#00FF66';
 const RETURN_STROKE_WEIGHT = 12;
-const WALK_ZOOM = 17;
-/** Google Maps Symbol 기본 방향은 +X(동). rotation 0 = 동. */
-const HEADING_ARROW_PATH = 'M 4 0 L -2.4 -2.8 L -1 0 L -2.4 2.8 Z';
+const WALK_ZOOM = 18;
 export const ARROW_ROTATION_OFFSETS = [0, 90, -90, 180] as const;
 
 export type FollowCameraDebug = {
@@ -22,6 +21,7 @@ export type FollowCameraDebug = {
   setCenterCount: number;
   panToCount: number;
   moveCameraCount: number;
+  fitBoundsCount: number;
   lat: number;
   lng: number;
   mapCenterLat: number | null;
@@ -32,17 +32,79 @@ export type FollowCameraDebug = {
   arrowOffset: number;
 };
 
+type CameraCounts = {
+  setCenter: number;
+  panTo: number;
+  moveCamera: number;
+  fitBounds: number;
+};
+
+function lookAheadPoint(
+  user: PlaceLocation,
+  headingDeg: number | null,
+  mapHeightPx: number,
+  zoom: number
+): google.maps.LatLngLiteral {
+  const heading = headingDeg != null && Number.isFinite(headingDeg) ? headingDeg : 0;
+  const metersPerPixel =
+    (156543.03392 * Math.cos((user.latitude * Math.PI) / 180)) / 2 ** zoom;
+  const shiftM = Math.max(22, (mapHeightPx / 6) * metersPerPixel);
+  const ahead = destinationPoint(user, heading, shiftM);
+  return { lat: ahead.latitude, lng: ahead.longitude };
+}
+
 function applyNavCamera(
   map: google.maps.Map,
   user: PlaceLocation,
   headingUp: boolean,
   headingDeg: number | null,
-  counts: { setCenter: number; panTo: number; moveCamera: number }
+  counts: CameraCounts
 ): { lat: number; lng: number } {
-  const pos = { lat: user.latitude, lng: user.longitude };
-  const zoom = Math.max(map.getZoom() ?? WALK_ZOOM, WALK_ZOOM);
+  const zoom = WALK_ZOOM;
   const heading =
     headingUp && headingDeg != null && Number.isFinite(headingDeg) ? headingDeg : 0;
+  const mapH = map.getDiv()?.clientHeight || 640;
+  const target = headingUp
+    ? lookAheadPoint(user, heading, mapH, zoom)
+    : { lat: user.latitude, lng: user.longitude };
+  const latLng = new google.maps.LatLng(target.lat, target.lng);
+  const proto = google.maps.Map.prototype as google.maps.Map & {
+    moveCamera?: (opts: {
+      center: google.maps.LatLngLiteral;
+      heading?: number;
+      zoom?: number;
+      tilt?: number;
+    }) => void;
+    panTo?: (latLng: google.maps.LatLng | google.maps.LatLngLiteral) => void;
+  };
+
+  try {
+    map.setOptions({
+      center: latLng,
+      zoom,
+      heading,
+      tilt: 0,
+    });
+  } catch {
+    // setOptions 미지원
+  }
+
+  try {
+    map.setCenter(latLng);
+    counts.setCenter += 1;
+  } catch {
+    // setCenter 실패
+  }
+
+  const panTo = (typeof map.panTo === 'function' ? map.panTo : proto.panTo)?.bind(map);
+  if (typeof panTo === 'function') {
+    try {
+      panTo(latLng);
+      counts.panTo += 1;
+    } catch {
+      // panTo 실패
+    }
+  }
 
   const camera = map as google.maps.Map & {
     moveCamera?: (opts: {
@@ -52,45 +114,44 @@ function applyNavCamera(
       tilt?: number;
     }) => void;
   };
-
-  try {
-    map.setCenter(pos);
-    counts.setCenter += 1;
-  } catch {
-    // setCenter 실패
-  }
-
-  try {
-    map.panTo(pos);
-    counts.panTo += 1;
-  } catch {
-    // panTo 실패
-  }
-
-  try {
-    if (typeof camera.moveCamera === 'function') {
-      camera.moveCamera({
-        center: pos,
+  const moveCamera =
+    typeof camera.moveCamera === 'function' ? camera.moveCamera.bind(map) : proto.moveCamera?.bind(map);
+  if (typeof moveCamera === 'function') {
+    try {
+      moveCamera({
+        center: { lat: target.lat, lng: target.lng },
         zoom,
         heading,
         tilt: 0,
       });
       counts.moveCamera += 1;
-    } else {
-      map.setZoom(zoom);
-    }
-  } catch {
-    try {
-      map.setZoom(zoom);
     } catch {
-      // zoom 실패
+      // moveCamera 실패
     }
+  }
+
+  try {
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend({ lat: user.latitude, lng: user.longitude });
+    bounds.extend(target);
+    map.fitBounds(bounds, {
+      top: Math.round(mapH * 0.1),
+      right: 80,
+      bottom: Math.round(mapH * 0.45),
+      left: 16,
+    });
+    counts.fitBounds += 1;
+    const fittedZoom = map.getZoom() ?? zoom;
+    if (fittedZoom > 18) map.setZoom(18);
+    if (fittedZoom < 16) map.setZoom(17);
+  } catch {
+    // fitBounds 실패
   }
 
   const after = map.getCenter();
   return {
-    lat: after?.lat() ?? pos.lat,
-    lng: after?.lng() ?? pos.lng,
+    lat: after?.lat() ?? target.lat,
+    lng: after?.lng() ?? target.lng,
   };
 }
 
@@ -109,14 +170,14 @@ function metersBetween(
 
 function headingArrowIcon(rotation: number): google.maps.Symbol {
   return {
-    path: HEADING_ARROW_PATH,
-    scale: 5,
+    path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+    scale: 7,
     fillColor: '#1d4ed8',
     fillOpacity: 1,
     strokeColor: '#ffffff',
-    strokeWeight: 1.5,
+    strokeWeight: 2,
     rotation,
-    anchor: new google.maps.Point(0, 0),
+    anchor: new google.maps.Point(0, 2.4),
   };
 }
 
@@ -155,7 +216,7 @@ export default function GoogleMapViewer({
   recenterRequestId = 0,
   returnPoint = null,
   onFollowCamera,
-  arrowRotationOffset = -90,
+  arrowRotationOffset = 0,
 }: GoogleMapViewerProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
@@ -173,8 +234,10 @@ export default function GoogleMapViewer({
   const panToCountRef = useRef(0);
   const setCenterCountRef = useRef(0);
   const moveCameraCountRef = useRef(0);
+  const fitBoundsCountRef = useRef(0);
   const lastUserPosRef = useRef<google.maps.LatLngLiteral | null>(null);
   const prevFollowRef = useRef(false);
+  const userDragPauseUntilRef = useRef(0);
   followModeRef.current = followMode;
   onSelectPlaceRef.current = onSelectPlace;
   onFollowCameraRef.current = onFollowCamera;
@@ -199,15 +262,18 @@ export default function GoogleMapViewer({
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: true,
-          rotateControl: false,
+          rotateControl: true,
           gestureHandling: 'greedy',
         };
-        const raster = google.maps.RenderingType?.RASTER;
-        if (raster) {
-          mapOptions.renderingType = raster;
+        const vector = google.maps.RenderingType?.VECTOR;
+        if (vector) {
+          mapOptions.renderingType = vector;
         }
 
         const map = new google.maps.Map(mapRef.current, mapOptions);
+        map.addListener('dragstart', () => {
+          userDragPauseUntilRef.current = Date.now() + 8000;
+        });
 
         mapInstanceRef.current = map;
         setMapReady(true);
@@ -309,6 +375,8 @@ export default function GoogleMapViewer({
       setCenterCountRef.current = 0;
       panToCountRef.current = 0;
       moveCameraCountRef.current = 0;
+      fitBoundsCountRef.current = 0;
+      userDragPauseUntilRef.current = 0;
     }
     prevFollowRef.current = followMode;
 
@@ -354,21 +422,24 @@ export default function GoogleMapViewer({
       }
     }
 
-    if (followMode) {
+    if (followMode && Date.now() >= userDragPauseUntilRef.current) {
       const counts = {
         setCenter: setCenterCountRef.current,
         panTo: panToCountRef.current,
         moveCamera: moveCameraCountRef.current,
+        fitBounds: fitBoundsCountRef.current,
       };
       const after = applyNavCamera(map, userLocation, headingUp, mapHeadingDeg, counts);
       setCenterCountRef.current = counts.setCenter;
       panToCountRef.current = counts.panTo;
       moveCameraCountRef.current = counts.moveCamera;
+      fitBoundsCountRef.current = counts.fitBounds;
       const debug: FollowCameraDebug = {
         followMode: true,
         setCenterCount: counts.setCenter,
         panToCount: counts.panTo,
         moveCameraCount: counts.moveCamera,
+        fitBoundsCount: counts.fitBounds,
         lat: userLocation.latitude,
         lng: userLocation.longitude,
         mapCenterLat: after.lat,
@@ -399,15 +470,18 @@ export default function GoogleMapViewer({
   useEffect(() => {
     if (!recenterRequestId || !mapReady || !mapInstanceRef.current || !userLocation) return;
     const map = mapInstanceRef.current;
+    userDragPauseUntilRef.current = 0;
     const counts = {
       setCenter: setCenterCountRef.current,
       panTo: panToCountRef.current,
       moveCamera: moveCameraCountRef.current,
+      fitBounds: fitBoundsCountRef.current,
     };
     applyNavCamera(map, userLocation, headingUp, mapHeadingDeg, counts);
     setCenterCountRef.current = counts.setCenter;
     panToCountRef.current = counts.panTo;
     moveCameraCountRef.current = counts.moveCamera;
+    fitBoundsCountRef.current = counts.fitBounds;
   }, [recenterRequestId, mapReady, userLocation, headingUp, mapHeadingDeg]);
 
   useEffect(() => {

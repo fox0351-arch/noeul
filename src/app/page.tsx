@@ -12,7 +12,7 @@ import { generateTravelBlogEssay, TravelBlogDraft } from '@/lib/travelBlogEssay'
 import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem, withPresetChecklistTexts } from '@/types/travelMap';
 import { TravelRoute, routePointsToLocations } from '@/types/route';
 import { parseTrailFile } from '@/lib/gpxKmlParser';
-import { OffRouteLevel, averageLocations, bearingDegrees, closestPointOnRoute, distanceToRouteMeters, haversineMeters, offRouteLevelFromDistance, speedKmhFromCoords, GPS_SMOOTH_COUNT, MAX_ACCEPT_GPS_ACCURACY_M, MIN_HEADING_MOVE_M, MIN_MAP_ROTATE_KMH, STOP_MAP_ROTATE_KMH, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
+import { OffRouteLevel, averageLocations, bearingDegrees, closestPointOnRoute, distanceToRouteMeters, haversineMeters, offRouteLevelFromDistance, speedKmhFromCoords, GPS_JUMP_MAX_MPS, GPS_JUMP_MIN_M, GPS_SMOOTH_COUNT, MAX_ACCEPT_GPS_ACCURACY_M, MIN_HEADING_MOVE_M, MIN_MAP_ROTATE_KMH, OFF_ROUTE_HOLD_MS, OFF_ROUTE_THRESHOLD_M, STOP_MAP_ROTATE_KMH, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
 import {
   formatSosMessage,
   loadBatterySave,
@@ -138,7 +138,7 @@ export default function HomePage() {
   currentRouteRef.current = currentRoute;
   const [followCameraDebug, setFollowCameraDebug] = useState<FollowCameraDebug | null>(null);
   const [gpsReceiveCount, setGpsReceiveCount] = useState(0);
-  const [arrowRotationOffset, setArrowRotationOffset] = useState(-90);
+  const [arrowRotationOffset, setArrowRotationOffset] = useState(0);
   const { installed, hint: installHint, install: installApp } = usePwaInstall();
 
   const displayedPlaces = useMemo(() => {
@@ -323,11 +323,36 @@ export default function HomePage() {
     gpsBufferRef.current = [];
     headingOriginRef.current = lastRawGpsRef.current;
     let watchId: number | null = null;
+    let offRouteSince = 0;
     console.info('[노을-follow] watch start', { isFollowMode: true, intervalMs });
 
-    const applyOffRoute = (distance: number) => {
+    const applyOffRoute = (distance: number, loc: PlaceLocation, routeLocations: PlaceLocation[]) => {
+      if (distance < OFF_ROUTE_THRESHOLD_M) {
+        offRouteSince = 0;
+        const prevLevel = offRouteLevelRef.current;
+        if (prevLevel === 0) {
+          setReturnPoint(null);
+          return;
+        }
+        offRouteLevelRef.current = 0;
+        setOffRouteLevel(0);
+        setReturnPoint(null);
+        stopRepeatingSpeech();
+        speakKorean(RETURN_TO_ROUTE_VOICE);
+        vibrateOnce();
+        setOffRouteToast('');
+        if (offRouteToastTimerRef.current) window.clearTimeout(offRouteToastTimerRef.current);
+        setReturnToast('✅ 원래 경로로 복귀했습니다');
+        window.setTimeout(() => setReturnToast(''), 2000);
+        return;
+      }
+
+      if (!offRouteSince) offRouteSince = Date.now();
+      if (Date.now() - offRouteSince < OFF_ROUTE_HOLD_MS) return;
+
       const nextLevel = offRouteLevelFromDistance(distance);
       const prevLevel = offRouteLevelRef.current;
+      setReturnPoint(closestPointOnRoute(loc, routeLocations));
       if (nextLevel === prevLevel) return;
 
       offRouteLevelRef.current = nextLevel;
@@ -337,15 +362,6 @@ export default function HomePage() {
         stopRepeatingSpeech();
       }
 
-      if (nextLevel === 0 && prevLevel > 0) {
-        speakKorean(RETURN_TO_ROUTE_VOICE);
-        vibrateOnce();
-        setOffRouteToast('');
-        if (offRouteToastTimerRef.current) window.clearTimeout(offRouteToastTimerRef.current);
-        setReturnToast('✅ 원래 경로로 복귀했습니다');
-        window.setTimeout(() => setReturnToast(''), 2000);
-        return;
-      }
       if ((nextLevel === 20 || nextLevel === 50 || nextLevel === 100) && prevLevel < nextLevel) {
         const meters = Math.max(1, Math.round(distance));
         setOffRouteToast(offRouteToastText(meters));
@@ -377,6 +393,15 @@ export default function HomePage() {
         longitude: coords.longitude,
       };
       const prevRaw = lastRawGpsRef.current;
+      if (prevRaw && lastFixAtRef.current) {
+        const jumpM = haversineMeters(prevRaw, raw);
+        const dt = now - lastFixAtRef.current;
+        const mps = (jumpM / Math.max(dt, 1)) * 1000;
+        if (jumpM >= GPS_JUMP_MIN_M && mps > GPS_JUMP_MAX_MPS) {
+          console.info('[노을-gps] ignore jump', { jumpM: Math.round(jumpM), dt, mps: Math.round(mps * 10) / 10 });
+          return;
+        }
+      }
       lastRawGpsRef.current = raw;
       gpsBufferRef.current = [...gpsBufferRef.current, raw].slice(-GPS_SMOOTH_COUNT);
       const next = averageLocations(gpsBufferRef.current);
@@ -409,9 +434,7 @@ export default function HomePage() {
       }
       if (heading != null && Number.isFinite(heading)) {
         lastGoodHeadingRef.current = heading;
-        if (mapRotatingRef.current || movedM >= MIN_HEADING_MOVE_M) {
-          mapHeadingRef.current = heading;
-        }
+        mapHeadingRef.current = heading;
       }
 
       lastFixRef.current = next;
@@ -432,12 +455,7 @@ export default function HomePage() {
       if (!route || route.points.length < 2) return;
       const routeLocations = routePointsToLocations(route.points);
       const distance = distanceToRouteMeters(next, routeLocations);
-      if (distance >= 20) {
-        setReturnPoint(closestPointOnRoute(next, routeLocations));
-      } else {
-        setReturnPoint(null);
-      }
-      applyOffRoute(distance);
+      applyOffRoute(distance, next, routeLocations);
     };
 
     const onError = (err: GeolocationPositionError) => {
@@ -835,6 +853,8 @@ export default function HomePage() {
     headingOriginRef.current = lastRawGpsRef.current;
     setGpsReceiveCount(0);
     setFollowCameraDebug(null);
+    setHeadingUpMode(true);
+    saveUserSettings({ headingUp: true });
     lastGoodHeadingRef.current = last?.heading ?? lastGoodHeadingRef.current;
     warmSpeechVoices();
     setIsFollowMode(true);
@@ -1361,8 +1381,9 @@ export default function HomePage() {
           <p className="text-2xl font-black leading-tight">setCenter {followCameraDebug?.setCenterCount ?? 0}</p>
           <p className="text-2xl font-black leading-tight">panTo {followCameraDebug?.panToCount ?? 0}</p>
           <p className="text-2xl font-black leading-tight">moveCamera {followCameraDebug?.moveCameraCount ?? 0}</p>
+          <p className="text-2xl font-black leading-tight">fitBounds {followCameraDebug?.fitBoundsCount ?? 0}</p>
           <p className="mt-1 text-sm font-bold leading-snug text-amber-200">
-            오차 {followCameraDebug?.centerDeltaM ?? '-'}m
+            전방 {followCameraDebug?.centerDeltaM ?? '-'}m
             {' · '}
             {arrowRotationOffset === 0 ? 'bearing' : arrowRotationOffset > 0 ? `+${arrowRotationOffset}` : String(arrowRotationOffset)}
           </p>
