@@ -109,6 +109,8 @@ export default function HomePage() {
   const [isLocating, setIsLocating] = useState(false);
   const [returnPoint, setReturnPoint] = useState<PlaceLocation | null>(null);
   const [returnToast, setReturnToast] = useState('');
+  const [offRouteToast, setOffRouteToast] = useState('');
+  const offRouteToastTimerRef = useRef<number | null>(null);
   const [batteryPercent, setBatteryPercent] = useState<number | null>(null);
   const [batteryCharging, setBatteryCharging] = useState(false);
   const [batterySupported, setBatterySupported] = useState(false);
@@ -297,9 +299,21 @@ export default function HomePage() {
       if (nextLevel === 0 && prevLevel > 0) {
         speakKorean('원래 경로로 복귀했습니다.');
         vibrateOnce();
-        setReturnToast('원래 경로로 복귀했습니다.');
-        window.setTimeout(() => setReturnToast(''), 2500);
+        setOffRouteToast('');
+        if (offRouteToastTimerRef.current) window.clearTimeout(offRouteToastTimerRef.current);
+        setReturnToast('✅ 원래 경로로 복귀했습니다');
+        window.setTimeout(() => setReturnToast(''), 2000);
         return;
+      }
+      if (nextLevel >= 20 && prevLevel < nextLevel) {
+        const meters = Math.max(1, Math.round(distance));
+        const text =
+          nextLevel === 30
+            ? `⚠ 경로 이탈 ${meters}m\n초록선을 따라 복귀하세요`
+            : `⚠ 경로 이탈 ${meters}m`;
+        setOffRouteToast(text);
+        if (offRouteToastTimerRef.current) window.clearTimeout(offRouteToastTimerRef.current);
+        offRouteToastTimerRef.current = window.setTimeout(() => setOffRouteToast(''), 3000);
       }
       if (nextLevel === 20 && prevLevel === 0) {
         vibrateAlert(20);
@@ -740,6 +754,8 @@ export default function HomePage() {
       setHeadingDeg(last.heading);
     }
     setIsFollowMode(true);
+    setIsPlaceListCollapsed(true);
+    setIsFieldTestOpen(false);
     const seconds = batterySave ? 10 : 2;
     setMapNotice(
       navigator.onLine
@@ -1202,7 +1218,7 @@ export default function HomePage() {
   };
 
   return (
-    <main className="flex flex-col h-dvh bg-slate-50">
+    <main className={`flex flex-col h-dvh bg-slate-50 ${isFollowMode ? 'hiking-mode' : ''}`}>
       <header className="flex items-center justify-between gap-2 px-3 py-2 bg-white border-b shrink-0 md:px-6 md:py-3 border-slate-200">
         <div className="flex items-center min-w-0 gap-2">
           <span className="text-xl font-black text-amber-600">노을</span>
@@ -1211,7 +1227,7 @@ export default function HomePage() {
         <div className="flex items-center gap-2 shrink-0">
           {batterySupported && batteryPercent != null && (
             <div
-              className={`flex items-center px-3 text-base font-black rounded-lg min-h-12 ${
+              className={`flex items-center px-2 text-sm font-black rounded-md min-h-10 ${
                 batteryAlertBand === 'low5' || batteryAlertBand === 'low10'
                   ? 'text-white bg-red-600'
                   : batteryAlertBand === 'low20'
@@ -1221,6 +1237,11 @@ export default function HomePage() {
               title={batteryCharging ? '충전 중' : '배터리'}
             >
               {batteryCharging ? '🔌 ' : ''}배터리 {batteryPercent}%
+            </div>
+          )}
+          {isFollowMode && gpsAccuracyM != null && (
+            <div className="flex items-center px-2 text-sm font-black rounded-md min-h-10 text-slate-900 bg-slate-100">
+              📍±{Math.round(gpsAccuracyM)}m
             </div>
           )}
           {!installed && (
@@ -1477,6 +1498,7 @@ export default function HomePage() {
           </div>
 
           <div className="p-3 overflow-y-auto border-t workspace-saved md:p-4 border-slate-200 bg-slate-50/80">
+            <div className="hiking-hide">
             <h2 className="mb-2 text-sm font-bold text-slate-800">내 여행지도</h2>
             <input
               ref={backupFileInputRef}
@@ -1544,6 +1566,7 @@ export default function HomePage() {
             >
               📂 루트 가져오기
             </button>
+            </div>
             <button
               type="button"
               onClick={handleToggleFollowRoute}
@@ -1555,6 +1578,7 @@ export default function HomePage() {
             >
               {isFollowMode ? '🚶 따라가기 종료' : '🚶 루트 따라가기'}
             </button>
+            <div className="hiking-hide">
             <button
               type="button"
               onClick={handleToggleBatterySave}
@@ -1686,6 +1710,7 @@ export default function HomePage() {
                 ))}
               </div>
             )}
+            </div>
           </div>
 
         <div className="relative w-full min-h-0 workspace-map map-pane">
@@ -1701,20 +1726,6 @@ export default function HomePage() {
             recenterRequestId={recenterRequestId}
             returnPoint={offRouteLevel === 30 ? returnPoint : null}
           />
-          {isFollowMode && (
-            <div className="absolute z-10 max-w-[11rem] px-3 py-2 text-base font-black text-slate-900 bg-white border-2 border-slate-800 rounded-lg shadow top-3 right-3">
-              {gpsAccuracyM == null ? (
-                <p>GPS 찾는 중</p>
-              ) : (
-                <>
-                  <p>GPS 정확도 : ±{Math.round(gpsAccuracyM)}m</p>
-                  {gpsAccuracyM >= WEAK_GPS_ACCURACY_M && (
-                    <p className="mt-1 text-red-700">GPS 신호 약함</p>
-                  )}
-                </>
-              )}
-            </div>
-          )}
           {!isOnline && isFollowMode && (
             <p className="absolute z-10 px-3 py-2 text-sm font-bold text-white rounded-lg shadow bottom-3 left-3 right-24 bg-slate-800/90">
               지도 사진은 인터넷이 필요합니다. GPS 추적은 계속됩니다.
@@ -1722,17 +1733,10 @@ export default function HomePage() {
           )}
         </div>
       </div>
-      {offRouteLevel === 20 && isFollowMode && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 pointer-events-none">
-          <div role="alert" className="pointer-events-auto w-full max-w-sm p-6 text-center bg-white border-4 border-red-600 rounded-2xl shadow-lg">
-            <p className="text-3xl font-black text-red-600">경로를 벗어났습니다.</p>
-          </div>
-        </div>
-      )}
-      {offRouteLevel === 30 && isFollowMode && (
-        <div className="fixed inset-0 z-[75] flex items-center justify-center p-4 pointer-events-none">
-          <div role="alert" className="pointer-events-auto w-full max-w-sm p-6 text-center bg-red-700 border-4 border-white rounded-2xl shadow-lg">
-            <p className="text-3xl font-black leading-snug text-white">경로를 벗어났습니다. 초록선을 따라 복귀하세요.</p>
+      {offRouteToast && (
+        <div className="fixed left-3 right-3 z-[70] pointer-events-none" style={{ top: '4.75rem' }}>
+          <div role="alert" className="px-3 py-2 text-base font-black leading-snug text-white whitespace-pre-line bg-red-700 rounded-lg shadow">
+            {offRouteToast}
           </div>
         </div>
       )}
@@ -1748,7 +1752,7 @@ export default function HomePage() {
         style={{
           width: 64,
           height: 64,
-          bottom: 'calc(1rem + 70px + 12px + env(safe-area-inset-bottom, 0px))',
+          bottom: 'calc(1rem + 56px + 12px + env(safe-area-inset-bottom, 0px))',
         }}
         aria-label="현재 위치로 이동"
       >
@@ -1764,8 +1768,8 @@ export default function HomePage() {
         onClick={handleOpenSos}
         className="fixed z-[90] flex items-center justify-center text-xl font-black text-white bg-red-600 rounded-full shadow-lg right-4 hover:bg-red-700"
         style={{
-          width: 70,
-          height: 70,
+          width: 56,
+          height: 56,
           bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
         }}
         aria-label="긴급 SOS"
@@ -1783,8 +1787,8 @@ export default function HomePage() {
       {(locateToast || returnToast) && (
         <div
           role="status"
-          className="fixed z-[92] left-1/2 -translate-x-1/2 px-4 py-3 text-xl font-black text-white bg-slate-900 rounded-xl shadow-lg"
-          style={{ bottom: 'calc(1rem + 70px + 88px + env(safe-area-inset-bottom, 0px))' }}
+          className="fixed z-[92] left-1/2 -translate-x-1/2 px-3 py-2 text-sm font-bold text-white bg-slate-800/95 rounded-lg shadow"
+          style={{ bottom: 'calc(1rem + 56px + 76px + env(safe-area-inset-bottom, 0px))' }}
         >
           {returnToast || locateToast}
         </div>

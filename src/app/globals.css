@@ -144,6 +144,28 @@ html.high-contrast button {
 }
 
 @media (max-width: 767px) {
+  .hiking-mode .map-pane {
+    flex: 1 1 auto !important;
+    min-height: 70vh !important;
+  }
+
+  .hiking-mode .workspace-search,
+  .hiking-mode .workspace-add,
+  .hiking-mode .workspace-places,
+  .hiking-mode .hiking-hide {
+    display: none !important;
+  }
+
+  .hiking-mode .workspace {
+    overflow: hidden;
+  }
+
+  .hiking-mode .workspace-saved {
+    flex: none;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
   .map-pane {
     flex: none;
   }

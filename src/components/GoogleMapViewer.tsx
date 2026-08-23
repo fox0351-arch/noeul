@@ -5,7 +5,10 @@ import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
 import { PlaceItem, PlaceLocation } from '@/types/place';
 
 const ROUTE_STROKE_COLOR = '#FF0000';
-const ROUTE_STROKE_WEIGHT = 8;
+const ROUTE_STROKE_WEIGHT = 6;
+const ROUTE_STROKE_OPACITY = 0.7;
+const RETURN_STROKE_COLOR = '#00FF66';
+const RETURN_STROKE_WEIGHT = 12;
 /** Google Maps CIRCLE scale is radius in px → 12 = 직경 24px */
 const USER_MARKER_SCALE = 12;
 
@@ -134,7 +137,7 @@ export default function GoogleMapViewer({
         path,
         geodesic: true,
         strokeColor: ROUTE_STROKE_COLOR,
-        strokeOpacity: 1,
+        strokeOpacity: ROUTE_STROKE_OPACITY,
         strokeWeight: ROUTE_STROKE_WEIGHT,
         map,
         zIndex: 2,
@@ -250,14 +253,14 @@ export default function GoogleMapViewer({
         position: returnPos,
         map,
         title: '복귀 지점',
-        zIndex: 9,
+        zIndex: 41,
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
-          scale: 10,
-          fillColor: '#16a34a',
+          scale: 11,
+          fillColor: RETURN_STROKE_COLOR,
           fillOpacity: 1,
-          strokeColor: '#ffffff',
-          strokeWeight: 3,
+          strokeColor: '#003322',
+          strokeWeight: 2,
         },
       });
     } else {
@@ -268,22 +271,23 @@ export default function GoogleMapViewer({
     const lineOptions: google.maps.PolylineOptions = {
       path: [userPos, returnPos],
       geodesic: true,
-      strokeColor: '#16a34a',
-      strokeOpacity: 0,
-      strokeWeight: 8,
-      zIndex: 8,
+      strokeColor: RETURN_STROKE_COLOR,
+      strokeOpacity: 1,
+      strokeWeight: RETURN_STROKE_WEIGHT,
+      zIndex: 40,
       map,
       icons: [
         {
           icon: {
-            path: 'M 0,-1 0,1',
-            strokeOpacity: 1,
-            strokeColor: '#16a34a',
-            strokeWeight: 8,
-            scale: 1,
+            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+            scale: 5,
+            fillColor: RETURN_STROKE_COLOR,
+            fillOpacity: 1,
+            strokeColor: '#003322',
+            strokeWeight: 1,
           },
-          offset: '0',
-          repeat: '22px',
+          offset: '12px',
+          repeat: '28px',
         },
       ],
     };
