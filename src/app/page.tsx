@@ -1352,6 +1352,36 @@ export default function HomePage() {
           )}
         </div>
       </header>
+      {isFollowMode && (
+        <div
+          className="fixed left-2 z-[100] px-3 py-2 text-white rounded-lg shadow-lg bg-black/85"
+          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 3.4rem)' }}
+        >
+          <p className="text-2xl font-black leading-tight">GPS {gpsReceiveCount}</p>
+          <p className="text-2xl font-black leading-tight">setCenter {followCameraDebug?.setCenterCount ?? 0}</p>
+          <p className="text-2xl font-black leading-tight">panTo {followCameraDebug?.panToCount ?? 0}</p>
+          <p className="text-2xl font-black leading-tight">moveCamera {followCameraDebug?.moveCameraCount ?? 0}</p>
+          <p className="mt-1 text-sm font-bold leading-snug text-amber-200">
+            오차 {followCameraDebug?.centerDeltaM ?? '-'}m
+            {' · '}
+            {arrowRotationOffset === 0 ? 'bearing' : arrowRotationOffset > 0 ? `+${arrowRotationOffset}` : String(arrowRotationOffset)}
+          </p>
+          <button
+            type="button"
+            className="mt-2 px-3 py-2 text-lg font-black text-slate-900 bg-yellow-300 rounded-md min-h-12"
+            onClick={() => {
+              const idx = ARROW_ROTATION_OFFSETS.indexOf(
+                arrowRotationOffset as (typeof ARROW_ROTATION_OFFSETS)[number]
+              );
+              const next = ARROW_ROTATION_OFFSETS[(idx + 1) % ARROW_ROTATION_OFFSETS.length];
+              setArrowRotationOffset(next);
+              window.localStorage.setItem('noeul.arrowRotationOffset.v1', String(next));
+            }}
+          >
+            화살표 보정
+          </button>
+        </div>
+      )}
       {installHint && (
         <p className="px-3 py-2 text-base font-bold text-center text-slate-900 bg-amber-100">{installHint}</p>
       )}
@@ -1850,47 +1880,6 @@ export default function HomePage() {
             onFollowCamera={handleFollowCamera}
             arrowRotationOffset={arrowRotationOffset}
           />
-          {isFollowMode && (
-            <div className="absolute z-20 px-2 py-1.5 text-[11px] font-bold leading-tight text-white rounded bottom-2 left-2 bg-black/75">
-              <p>GPS수신 {gpsReceiveCount}</p>
-              <p>setCenter {followCameraDebug?.setCenterCount ?? 0}</p>
-              <p>panTo {followCameraDebug?.panToCount ?? 0}</p>
-              <p>moveCamera {followCameraDebug?.moveCameraCount ?? 0}</p>
-              <p>
-                지도중심{' '}
-                {followCameraDebug?.mapCenterLat == null
-                  ? '-'
-                  : `${followCameraDebug.mapCenterLat.toFixed(5)}, ${followCameraDebug.mapCenterLng?.toFixed(5)}`}
-              </p>
-              <p>
-                내위치{' '}
-                {userLocation
-                  ? `${userLocation.latitude.toFixed(5)}, ${userLocation.longitude.toFixed(5)}`
-                  : '-'}
-              </p>
-              <p>중심오차 {followCameraDebug?.centerDeltaM ?? '-'}m</p>
-              <p>
-                화살표 방위{' '}
-                {followCameraDebug?.heading == null ? '-' : `${Math.round(followCameraDebug.heading)}°`}
-                {' → 적용 '}
-                {followCameraDebug?.arrowApplied == null ? '-' : `${Math.round(followCameraDebug.arrowApplied)}°`}
-              </p>
-              <button
-                type="button"
-                className="mt-1 px-2 py-1 text-xs font-black text-slate-900 bg-yellow-300 rounded"
-                onClick={() => {
-                  const idx = ARROW_ROTATION_OFFSETS.indexOf(
-                    arrowRotationOffset as (typeof ARROW_ROTATION_OFFSETS)[number]
-                  );
-                  const next = ARROW_ROTATION_OFFSETS[(idx + 1) % ARROW_ROTATION_OFFSETS.length];
-                  setArrowRotationOffset(next);
-                  window.localStorage.setItem('noeul.arrowRotationOffset.v1', String(next));
-                }}
-              >
-                화살표 보정 {arrowRotationOffset === 0 ? 'bearing' : arrowRotationOffset > 0 ? `bearing+${arrowRotationOffset}` : `bearing${arrowRotationOffset}`}
-              </button>
-            </div>
-          )}
           {isFollowMode && (
             <div className="absolute z-20 flex flex-col items-end gap-1.5 top-2 right-12 pointer-events-none">
               <button
