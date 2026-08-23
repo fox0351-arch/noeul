@@ -19,17 +19,20 @@ export function getUserDataAdapter(): UserDataAdapter {
   return adapter;
 }
 
-function isVoiceStyle(value: unknown): value is VoiceStyle {
-  return value === 'grandchild' || value === 'female' || value === 'male' || value === 'mute';
-}
-
 export function loadUserSettings(): UserSettings {
-  const stored = adapter.get<Partial<UserSettings>>('settings', 'prefs');
+  const stored = adapter.get<{ voiceStyle?: string; headingUp?: boolean }>('settings', 'prefs');
   if (!stored || typeof stored !== 'object') return { ...DEFAULT_USER_SETTINGS };
-  return {
-    voiceStyle: isVoiceStyle(stored.voiceStyle) ? stored.voiceStyle : DEFAULT_USER_SETTINGS.voiceStyle,
-    headingUp: typeof stored.headingUp === 'boolean' ? stored.headingUp : DEFAULT_USER_SETTINGS.headingUp,
-  };
+  const rawVoice = stored.voiceStyle;
+  const voiceStyle: VoiceStyle =
+    rawVoice === 'grandchild' || rawVoice === 'female'
+      ? 'female'
+      : rawVoice === 'male' || rawVoice === 'mute'
+        ? rawVoice
+        : DEFAULT_USER_SETTINGS.voiceStyle;
+  const headingUp = typeof stored.headingUp === 'boolean' ? stored.headingUp : DEFAULT_USER_SETTINGS.headingUp;
+  const next = { voiceStyle, headingUp };
+  if (rawVoice === 'grandchild') adapter.set('settings', 'prefs', next);
+  return next;
 }
 
 export function saveUserSettings(patch: Partial<UserSettings>): UserSettings {

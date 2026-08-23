@@ -104,7 +104,7 @@ export default function HomePage() {
   const [batterySave, setBatterySave] = useState(false);
   const [highContrast, setHighContrast] = useState(false);
   const [headingUpMode, setHeadingUpMode] = useState(true);
-  const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>('grandchild');
+  const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>('female');
   const [mapHeadingDeg, setMapHeadingDeg] = useState<number | null>(null);
   const [sosStep, setSosStep] = useState<0 | 1 | 2>(0);
   const [isSosShareOpen, setIsSosShareOpen] = useState(false);
@@ -1631,10 +1631,9 @@ export default function HomePage() {
               {highContrast ? '흑백 켜짐' : '흑백 모드'}
             </button>
             <label className="block mb-1 text-base font-bold text-slate-800">음성 안내 스타일</label>
-            <div className="grid grid-cols-2 gap-2 mb-3">
+            <div className="grid grid-cols-3 gap-2 mb-3">
               {(
                 [
-                  ['grandchild', '👧 손녀'],
                   ['female', '👩 여성'],
                   ['male', '👨 남성'],
                   ['mute', '🔇 무음'],

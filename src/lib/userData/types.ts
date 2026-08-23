@@ -1,4 +1,4 @@
-export type VoiceStyle = 'grandchild' | 'female' | 'male' | 'mute';
+export type VoiceStyle = 'female' | 'male' | 'mute';
 
 export interface UserSettings {
   voiceStyle: VoiceStyle;
@@ -6,7 +6,7 @@ export interface UserSettings {
 }
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
-  voiceStyle: 'grandchild',
+  voiceStyle: 'female',
   headingUp: true,
 };
 

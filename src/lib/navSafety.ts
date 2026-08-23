@@ -30,7 +30,6 @@ export const OFF_ROUTE_VOICE: Record<20 | 50 | 100, string> = {
 export const RETURN_TO_ROUTE_VOICE = '와. 잘 찾으셨어요. 다시 길을 따라가시면 돼요.';
 
 export const VOICE_PREVIEW: Record<Exclude<VoiceStyle, 'mute'>, string> = {
-  grandchild: '할아버지, 손녀 목소리로 안내할게요.',
   female: '여성 목소리로 안내하겠습니다.',
   male: '남성 목소리로 안내하겠습니다.',
 };
@@ -39,7 +38,7 @@ export function offRouteToastText(meters: number): string {
   return `⚠ 경로 이탈 ${meters}m\n📍 초록색 지점으로\n돌아오세요`;
 }
 
-/** 현장 참고음(소녀 314Hz / 여성 230Hz)에 맞춘 녹음 클립 */
+/** 여성·남성 안내 녹음 */
 function clipForText(style: Exclude<VoiceStyle, 'mute'>, text: string): string | null {
   const folder = `/voice/${style}`;
   if (text === OFF_ROUTE_VOICE[20]) return `${folder}/20.mp3`;
@@ -78,12 +77,11 @@ const VOICE_TONE: Record<
   Exclude<VoiceStyle, 'mute'>,
   { pitch: number; rate: number }
 > = {
-  grandchild: { pitch: 1.52, rate: 1.05 },
   female: { pitch: 1, rate: 0.96 },
   male: { pitch: 0.78, rate: 0.92 },
 };
 
-let activeVoiceStyle: VoiceStyle = 'grandchild';
+let activeVoiceStyle: VoiceStyle = 'female';
 
 export function setActiveVoiceStyle(style: VoiceStyle): void {
   activeVoiceStyle = style;
@@ -108,13 +106,6 @@ function pickVoiceForStyle(style: Exclude<VoiceStyle, 'mute'>): SpeechSynthesisV
       byName(/injoon|hyunsu|jinho|wavenet-c|wavenet-d|standard-c|standard-d|남성|male|man|minho/i) ??
       pool.find((voice) => !/female|woman|여성|nari|sunhi|heami|yuna/i.test(voice.name)) ??
       pool[0]
-    );
-  }
-
-  if (style === 'grandchild') {
-    return (
-      byName(/child|kid|girl|junior|compact/i) ??
-      (pool.length > 1 ? pool[pool.length - 1] : pool[0])
     );
   }
 
