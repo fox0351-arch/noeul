@@ -1646,7 +1646,13 @@ export default function HomePage() {
                     saveUserSettings({ voiceStyle: style });
                     if (style !== 'mute') {
                       warmSpeechVoices();
-                      speakKorean('이 목소리로 안내할게요.');
+                      const preview =
+                        style === 'grandchild'
+                          ? '할아버지, 손녀 목소리로 안내할게요.'
+                          : style === 'female'
+                            ? '여성 목소리로 안내하겠습니다.'
+                            : '남성 목소리로 안내하겠습니다.';
+                      speakKorean(preview);
                     }
                   }}
                   className={`px-2 text-base font-black rounded-lg min-h-12 border-2 ${

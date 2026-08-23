@@ -35,11 +35,11 @@ export function offRouteToastText(meters: number): string {
 
 const VOICE_TONE: Record<
   Exclude<VoiceStyle, 'mute'>,
-  { pitch: number; rate: number; prefer: RegExp }
+  { pitch: number; rate: number }
 > = {
-  grandchild: { pitch: 1.5, rate: 1.0, prefer: /nari|sunhi|heami|yuna|sora|google|여성|female|woman|girl|child/i },
-  female: { pitch: 1.1, rate: 1.0, prefer: /nari|sunhi|heami|yuna|sora|google|여성|female|woman/i },
-  male: { pitch: 0.9, rate: 0.95, prefer: /injoon|hyunsu|jinho|남성|male|man|david|minho/i },
+  grandchild: { pitch: 2, rate: 1.18 },
+  female: { pitch: 1, rate: 0.88 },
+  male: { pitch: 0.72, rate: 0.9 },
 };
 
 let activeVoiceStyle: VoiceStyle = 'grandchild';
@@ -48,20 +48,39 @@ export function setActiveVoiceStyle(style: VoiceStyle): void {
   activeVoiceStyle = style;
 }
 
-function pickVoiceForStyle(style: Exclude<VoiceStyle, 'mute'>): SpeechSynthesisVoice | null {
+function koreanVoicePool(): SpeechSynthesisVoice[] {
   const voices = window.speechSynthesis.getVoices();
-  if (voices.length === 0) return null;
   const korean = voices.filter(
     (voice) => /^ko\b/i.test(voice.lang) || /한국|korean/i.test(`${voice.name} ${voice.lang}`)
   );
-  const pool = korean.length > 0 ? korean : voices;
-  const preferred = pool.find((voice) => VOICE_TONE[style].prefer.test(`${voice.name} ${voice.voiceURI}`));
-  if (preferred) return preferred;
+  return korean.length > 0 ? korean : voices;
+}
+
+function pickVoiceForStyle(style: Exclude<VoiceStyle, 'mute'>): SpeechSynthesisVoice | null {
+  const pool = koreanVoicePool();
+  if (pool.length === 0) return null;
+
+  const byName = (pattern: RegExp) => pool.find((voice) => pattern.test(`${voice.name} ${voice.voiceURI}`));
+
   if (style === 'male') {
-    const notFemale = pool.find((voice) => !/female|woman|여성|nari|sunhi|heami/i.test(voice.name));
-    return notFemale ?? pool[0] ?? null;
+    return (
+      byName(/injoon|hyunsu|jinho|wavenet-c|wavenet-d|standard-c|standard-d|남성|male|man|minho/i) ??
+      pool.find((voice) => !/female|woman|여성|nari|sunhi|heami|yuna/i.test(voice.name)) ??
+      pool[0]
+    );
   }
-  return pool[0] ?? null;
+
+  if (style === 'grandchild') {
+    return (
+      byName(/child|kid|girl|junior|compact/i) ??
+      (pool.length > 1 ? pool[pool.length - 1] : pool[0])
+    );
+  }
+
+  return (
+    byName(/heami|sunhi|yuna|nari|wavenet-a|wavenet-b|standard-a|standard-b|neural|premium|여성|female|woman/i) ??
+    pool[0]
+  );
 }
 
 export function warmSpeechVoices(): void {
@@ -79,12 +98,12 @@ export function speakKorean(text: string): void {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'ko-KR';
+    const voice = pickVoiceForStyle(activeVoiceStyle);
+    if (voice) utterance.voice = voice;
     const tone = VOICE_TONE[activeVoiceStyle];
     utterance.rate = tone.rate;
     utterance.pitch = tone.pitch;
     utterance.volume = 1;
-    const voice = pickVoiceForStyle(activeVoiceStyle);
-    if (voice) utterance.voice = voice;
     window.speechSynthesis.speak(utterance);
   } catch {
     // 음성 미지원 기기는 무시
