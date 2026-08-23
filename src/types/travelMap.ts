@@ -1,4 +1,5 @@
 import { PlaceItem } from '@/types/place';
+import { TravelRoute } from '@/types/route';
 
 export interface TravelMapChecklistItem {
   id: string;
@@ -35,6 +36,8 @@ export interface TravelMap {
   memo?: string;
   /** 여행 준비 체크리스트 */
   checklist?: TravelMapChecklistItem[];
+  /** GPX/KML에서 가져온 걷기 루트. 없으면 기존 여행지도와 동일 */
+  route?: TravelRoute;
 }
 
 export function withPresetChecklistTexts(

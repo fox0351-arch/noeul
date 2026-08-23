@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import PwaProvider from "@/components/PwaProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,10 +14,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "노을",
-  applicationName: "노을",
-  description: "여행지도를 만들고 My Maps용 KML을 생성하는 앱",
+  title: "노을 - 시니어 걷기 내비",
+  applicationName: "노을 - 시니어 걷기 내비",
+  description: "갈맷길·제주올레길·둘레길을 안전하게 따라가는 시니어 전용 걷기 내비게이션",
   manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    title: "노을",
+    statusBarStyle: "default",
+  },
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "48x48" },
@@ -30,6 +36,7 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#d97706",
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -38,7 +45,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="ko"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <PwaProvider>{children}</PwaProvider>
+      </body>
     </html>
   );
 }

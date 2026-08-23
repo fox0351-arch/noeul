@@ -4,13 +4,48 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { PlaceDetails, PlaceItem, PlaceLocation, PlacesSearchResponse } from '@/types/place';
 import { generateKML, downloadKmlFile } from '@/lib/kmlBuilder';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
+import { loadActiveRouteSession, saveActiveRouteSession } from '@/lib/activeRouteStorage';
 import { createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap, updateTravelMapNotes } from '@/lib/travelMapStorage';
 import { filesToPlacePhotos, isQuotaExceeded, MAX_PHOTOS_PER_PLACE } from '@/lib/placePhotos';
 import { analyzePlacePhotos } from '@/lib/photoAiClient';
 import { generateTravelBlogEssay, TravelBlogDraft } from '@/lib/travelBlogEssay';
 import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem, withPresetChecklistTexts } from '@/types/travelMap';
+import { TravelRoute, routePointsToLocations } from '@/types/route';
+import { parseTrailFile } from '@/lib/gpxKmlParser';
+import { bearingDegrees, closestPointOnRoute, distanceToRouteMeters, offRouteLevelFromDistance, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
+import {
+  formatSosMessage,
+  loadBatterySave,
+  openKakaoShare,
+  openPhoneCall,
+  openSmsShare,
+  playAlertBeep,
+  saveBatterySave,
+  shareOrCopy,
+  speakKorean,
+  startRepeatingSpeech,
+  stopRepeatingSpeech,
+  unlockAlertAudio,
+  vibrateAlert,
+  vibrateTimes,
+  vibrateOnce,
+} from '@/lib/navSafety';
+import { batteryBand, subscribeBattery, type BatteryLevelBand } from '@/lib/batteryStatus';
+import { loadLastGps, saveLastGps, lastGpsToLocation } from '@/lib/lastGps';
+import { loadGuardianPhone, saveGuardianPhone } from '@/lib/guardianStorage';
+import { FIELD_TEST_ITEMS, loadFieldTestChecks, saveFieldTestChecks } from '@/lib/fieldTestChecklist';
+import { usePwaInstall } from '@/hooks/usePwaInstall';
 import GoogleMapViewer from '@/components/GoogleMapViewer';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
+
+function formatMapDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}.${month}.${day}`;
+}
 
 export default function HomePage() {
   const [keyword, setKeyword] = useState('');
@@ -37,6 +72,7 @@ export default function HomePage() {
   const [placeListToggledByUser, setPlaceListToggledByUser] = useState(false);
   const placeListSectionRef = useRef<HTMLDivElement>(null);
   const backupFileInputRef = useRef<HTMLInputElement>(null);
+  const routeFileInputRef = useRef<HTMLInputElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const photoTargetPlaceId = useRef<string | null>(null);
   const shouldScrollToPlaceList = useRef(false);
@@ -52,6 +88,35 @@ export default function HomePage() {
   const [isBlogGenerating, setIsBlogGenerating] = useState(false);
   const [blogDraft, setBlogDraft] = useState<TravelBlogDraft | null>(null);
   const [blogCopyNotice, setBlogCopyNotice] = useState('');
+  const [currentRoute, setCurrentRoute] = useState<TravelRoute | null>(null);
+  const [isFollowMode, setIsFollowMode] = useState(false);
+  const [userLocation, setUserLocation] = useState<PlaceLocation | null>(null);
+  const [headingDeg, setHeadingDeg] = useState<number | null>(null);
+  const [gpsAccuracyM, setGpsAccuracyM] = useState<number | null>(null);
+  const [offRouteLevel, setOffRouteLevel] = useState<0 | 20 | 30>(0);
+  const [isOnline, setIsOnline] = useState(true);
+  const [batterySave, setBatterySave] = useState(false);
+  const [highContrast, setHighContrast] = useState(false);
+  const [sosStep, setSosStep] = useState<0 | 1 | 2>(0);
+  const [isSosShareOpen, setIsSosShareOpen] = useState(false);
+  const [sosNotice, setSosNotice] = useState('');
+  const [guardianPhone, setGuardianPhone] = useState('');
+  const [fieldChecks, setFieldChecks] = useState<Record<string, boolean>>({});
+  const [isFieldTestOpen, setIsFieldTestOpen] = useState(false);
+  const [navSessionReady, setNavSessionReady] = useState(false);
+  const [recenterRequestId, setRecenterRequestId] = useState(0);
+  const [locateToast, setLocateToast] = useState('');
+  const [isLocating, setIsLocating] = useState(false);
+  const [returnPoint, setReturnPoint] = useState<PlaceLocation | null>(null);
+  const [returnToast, setReturnToast] = useState('');
+  const [batteryPercent, setBatteryPercent] = useState<number | null>(null);
+  const [batteryCharging, setBatteryCharging] = useState(false);
+  const [batterySupported, setBatterySupported] = useState(false);
+  const [batteryAlertBand, setBatteryAlertBand] = useState<BatteryLevelBand>('ok');
+  const offRouteLevelRef = useRef<0 | 20 | 30>(0);
+  const lastBatteryBandRef = useRef<BatteryLevelBand>('ok');
+  const lastFixRef = useRef<PlaceLocation | null>(null);
+  const { installed, hint: installHint, install: installApp } = usePwaInstall();
 
   const displayedPlaces = useMemo(() => {
     if (hideManualExtras) {
@@ -80,10 +145,86 @@ export default function HomePage() {
     [displayedPlaces, selectedPlaceId]
   );
 
+  const routePoints = useMemo(
+    () => (currentRoute ? routePointsToLocations(currentRoute.points) : []),
+    [currentRoute]
+  );
+
+  const sosLocation = userLocation ?? lastGpsToLocation(loadLastGps());
+
   useEffect(() => {
     setManualPlaces(loadManualPlaces());
     setHasLoadedManualPlaces(true);
     setTravelMaps(loadTravelMaps());
+    setBatterySave(loadBatterySave());
+    setGuardianPhone(loadGuardianPhone());
+    setFieldChecks(loadFieldTestChecks());
+    const contrastOn = window.localStorage.getItem('noeul.highContrast.v1') === '1';
+    setHighContrast(contrastOn);
+    document.documentElement.classList.toggle('high-contrast', contrastOn);
+    setIsOnline(typeof navigator === 'undefined' ? true : navigator.onLine);
+
+    const lastFix = loadLastGps();
+    if (lastFix) {
+      lastFixRef.current = { latitude: lastFix.latitude, longitude: lastFix.longitude };
+    }
+
+    const session = loadActiveRouteSession();
+    if (session) {
+      setCurrentRoute(session.route);
+      setPlaces(session.places);
+      setHideManualExtras(true);
+      setMapTitle(session.title);
+      setCurrentQuery(session.query);
+      if (session.places[0]) {
+        setCenter(session.places[0].location);
+      } else if (session.route.points[0]) {
+        setCenter(session.route.points[0]);
+      }
+    }
+    setNavSessionReady(true);
+
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    return subscribeBattery((status) => {
+      setBatterySupported(status.supported);
+      setBatteryPercent(status.percent);
+      setBatteryCharging(status.charging);
+      if (!status.supported || status.percent == null) {
+        setBatteryAlertBand('ok');
+        lastBatteryBandRef.current = 'ok';
+        return;
+      }
+      const nextBand = batteryBand(status.percent, status.charging);
+      const prevBand = lastBatteryBandRef.current;
+      lastBatteryBandRef.current = nextBand;
+      setBatteryAlertBand(nextBand);
+      if (nextBand === prevBand || nextBand === 'ok') return;
+
+      const rank = { ok: 0, low20: 1, low10: 2, low5: 3 };
+      if (rank[nextBand] <= rank[prevBand]) return;
+
+      if (nextBand === 'low20') {
+        vibrateTimes(1);
+        return;
+      }
+      if (nextBand === 'low10') {
+        vibrateTimes(2);
+        speakKorean('배터리가 10퍼센트 남았습니다. 충전을 준비하세요.');
+        return;
+      }
+      vibrateTimes(3);
+      speakKorean('배터리가 5퍼센트입니다. 지금 충전하십시오.');
+    });
   }, []);
 
   useEffect(() => {
@@ -96,6 +237,20 @@ export default function HomePage() {
       }
     }
   }, [manualPlaces, hasLoadedManualPlaces]);
+
+  useEffect(() => {
+    if (!navSessionReady) return;
+    if (currentRoute && currentRoute.points.length >= 2) {
+      saveActiveRouteSession({
+        route: currentRoute,
+        places: displayedPlaces,
+        title: mapTitle.trim() || currentRoute.name,
+        query: currentQuery || currentRoute.name,
+      });
+      return;
+    }
+    saveActiveRouteSession(null);
+  }, [navSessionReady, currentRoute, displayedPlaces, mapTitle, currentQuery]);
 
   useEffect(() => {
     if (placeListToggledByUser) return;
@@ -114,10 +269,146 @@ export default function HomePage() {
   }, [places]);
 
   useEffect(() => {
+    if (!isFollowMode) {
+      setOffRouteLevel(0);
+      offRouteLevelRef.current = 0;
+      setReturnPoint(null);
+      stopRepeatingSpeech();
+      return;
+    }
+
+    let cancelled = false;
+    const intervalMs = batterySave ? 10000 : 2000;
+    let lastAcceptedAt = 0;
+    let watchId: number | null = null;
+
+    const applyOffRoute = (distance: number) => {
+      const nextLevel = offRouteLevelFromDistance(distance);
+      const prevLevel = offRouteLevelRef.current;
+      if (nextLevel === prevLevel) return;
+
+      offRouteLevelRef.current = nextLevel;
+      setOffRouteLevel(nextLevel);
+
+      if (nextLevel !== 30 && prevLevel === 30) {
+        stopRepeatingSpeech();
+      }
+
+      if (nextLevel === 0 && prevLevel > 0) {
+        speakKorean('원래 경로로 복귀했습니다.');
+        vibrateOnce();
+        setReturnToast('원래 경로로 복귀했습니다.');
+        window.setTimeout(() => setReturnToast(''), 2500);
+        return;
+      }
+      if (nextLevel === 20 && prevLevel === 0) {
+        vibrateAlert(20);
+        playAlertBeep(20);
+        return;
+      }
+      if (nextLevel === 30) {
+        vibrateAlert(30);
+        playAlertBeep(30);
+        startRepeatingSpeech('경로를 벗어났습니다. 초록선을 따라 복귀하세요.');
+      }
+    };
+
+    const updateFromPosition = (coords: GeolocationCoordinates) => {
+      if (cancelled) return;
+      const now = Date.now();
+      if (now - lastAcceptedAt < intervalMs - 200) return;
+      lastAcceptedAt = now;
+
+      const next: PlaceLocation = {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+      };
+      let heading: number | null =
+        coords.heading != null && Number.isFinite(coords.heading) ? coords.heading : null;
+      if (heading == null && lastFixRef.current) {
+        const moved = Math.hypot(
+          next.latitude - lastFixRef.current.latitude,
+          next.longitude - lastFixRef.current.longitude
+        );
+        if (moved > 0.00001) {
+          heading = bearingDegrees(lastFixRef.current, next);
+        }
+      }
+      lastFixRef.current = next;
+      setUserLocation(next);
+      setHeadingDeg(heading);
+      setGpsAccuracyM(Number.isFinite(coords.accuracy) ? coords.accuracy : null);
+      saveLastGps({
+        latitude: next.latitude,
+        longitude: next.longitude,
+        accuracyM: Number.isFinite(coords.accuracy) ? coords.accuracy : null,
+        heading,
+        savedAt: new Date().toISOString(),
+      });
+      setMapError('');
+
+      if (!currentRoute || currentRoute.points.length < 2) return;
+      const routeLocations = routePointsToLocations(currentRoute.points);
+      const distance = distanceToRouteMeters(next, routeLocations);
+      if (distance >= 30) {
+        setReturnPoint(closestPointOnRoute(next, routeLocations));
+      } else {
+        setReturnPoint(null);
+      }
+      applyOffRoute(distance);
+    };
+
+    const onError = (err: GeolocationPositionError) => {
+      if (cancelled) return;
+      if (err.code === err.PERMISSION_DENIED) {
+        setMapError('위치 권한이 꺼져 있습니다. 브라우저 설정에서 위치를 허용한 뒤 다시 따라가기를 눌러 주세요.');
+        setIsFollowMode(false);
+        return;
+      }
+      if (err.code === err.TIMEOUT) {
+        setMapError('GPS가 느립니다. 하늘이 보이는 곳에서 잠시 기다려 주세요. 추적은 계속됩니다.');
+        return;
+      }
+      setMapError('GPS를 찾지 못했습니다. 건물 밖, 하늘이 보이는 곳으로 이동해 주세요. 추적은 계속됩니다.');
+    };
+
+    const gpsOptions: PositionOptions = {
+      enableHighAccuracy: true,
+      maximumAge: intervalMs,
+      timeout: batterySave ? 15000 : 10000,
+    };
+
+    if (!navigator.geolocation) {
+      setMapError('이 기기에서는 위치를 쓸 수 없습니다. 위치 기능이 있는 휴대폰 브라우저를 사용해 주세요.');
+      setIsFollowMode(false);
+      return;
+    }
+
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => updateFromPosition(pos.coords),
+      onError,
+      gpsOptions
+    );
+
+    return () => {
+      cancelled = true;
+      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+      stopRepeatingSpeech();
+    };
+  }, [isFollowMode, currentRoute, batterySave]);
+
+  useEffect(() => {
     if (!selectedPlaceId) {
       setPlaceDetails(null);
       setDetailsError('');
       setIsDetailsLoading(false);
+      return;
+    }
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setIsDetailsLoading(false);
+      setPlaceDetails(null);
+      setDetailsError('인터넷이 없어 장소 설명을 불러올 수 없습니다. 저장된 루트와 GPS 따라가기는 그대로 쓸 수 있습니다.');
       return;
     }
 
@@ -185,6 +476,8 @@ export default function HomePage() {
       setMapMemo('');
       setMapChecklist([]);
       setIsMapMemoOpen(false);
+      setCurrentRoute(null);
+      setIsFollowMode(false);
       if (window.matchMedia('(max-width: 767px)').matches) {
         setIsPlaceListCollapsed(false);
         setPlaceListToggledByUser(true);
@@ -256,6 +549,7 @@ export default function HomePage() {
         sourceQuery: currentQuery || undefined,
         memo: mapMemo,
         checklist: mapChecklist,
+        route: currentRoute ?? undefined,
       });
       if (updated) {
         setTravelMaps(updated);
@@ -378,6 +672,232 @@ export default function HomePage() {
     downloadKmlFile(`${currentQuery}_여행지도_V0.1.kml`, kmlContent);
   };
 
+  const handleImportRouteClick = () => {
+    routeFileInputRef.current?.click();
+  };
+
+  const handleImportRouteFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setMapError('');
+    setMapNotice('');
+    try {
+      const parsed = await parseTrailFile(file);
+      setCurrentRoute(parsed.route);
+      setPlaces(parsed.places);
+      setHideManualExtras(true);
+      setSelectedPlaceId(null);
+      setCurrentQuery(parsed.route.name);
+      if (!mapTitle.trim()) {
+        setMapTitle(parsed.route.name);
+      }
+      const first = parsed.places[0]?.location ?? parsed.route.points[0];
+      if (first) setCenter(first);
+      setIsFollowMode(false);
+      setMapNotice(`'${parsed.route.name}' 루트를 지도에 표시했습니다. 여행지도 저장으로 함께 보관하세요.`);
+      if (loadedMapId) {
+        const updated = updateTravelMap(loadedMapId, {
+          title: mapTitle.trim() || parsed.route.name,
+          places: parsed.places,
+          sourceQuery: parsed.route.name,
+          memo: mapMemo,
+          checklist: mapChecklist,
+          route: parsed.route,
+        });
+        if (updated) setTravelMaps(updated);
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : '루트 파일을 읽지 못했습니다.';
+      setMapError(message);
+    }
+  };
+
+  const handleToggleFollowRoute = () => {
+    setMapError('');
+    setMapNotice('');
+    if (isFollowMode) {
+      setIsFollowMode(false);
+      setMapNotice('루트 따라가기를 종료했습니다.');
+      return;
+    }
+    if (!currentRoute || currentRoute.points.length < 2) {
+      setMapError('따라갈 루트가 없습니다. 먼저 GPX/KML을 가져오거나, 저장된 여행지도에서 루트 있음을 불러오세요.');
+      return;
+    }
+    if (!navigator.geolocation) {
+      setMapError('이 기기에서는 위치를 쓸 수 없습니다. 위치 기능이 있는 휴대폰으로 열어 주세요.');
+      return;
+    }
+    unlockAlertAudio();
+    const last = loadLastGps();
+    if (last) {
+      const loc = { latitude: last.latitude, longitude: last.longitude };
+      lastFixRef.current = loc;
+      setUserLocation(loc);
+      setGpsAccuracyM(last.accuracyM);
+      setHeadingDeg(last.heading);
+    }
+    setIsFollowMode(true);
+    const seconds = batterySave ? 10 : 2;
+    setMapNotice(
+      navigator.onLine
+        ? `현재 위치를 ${seconds}초마다 갱신합니다. 루트는 이 기기에 저장되어 있습니다.`
+        : `인터넷이 없어도 GPS로 따라갈 수 있습니다. ${seconds}초마다 위치를 확인합니다.`
+    );
+  };
+
+  const handleToggleBatterySave = () => {
+    setBatterySave((current) => {
+      const next = !current;
+      saveBatterySave(next);
+      setMapNotice(next ? '배터리 절약: 10초마다 GPS를 확인합니다.' : '일반 모드: 2초마다 GPS를 확인합니다.');
+      return next;
+    });
+  };
+
+  const handleToggleHighContrast = () => {
+    setHighContrast((current) => {
+      const next = !current;
+      window.localStorage.setItem('noeul.highContrast.v1', next ? '1' : '0');
+      document.documentElement.classList.toggle('high-contrast', next);
+      return next;
+    });
+  };
+
+  const handleToggleFieldCheck = (id: string) => {
+    setFieldChecks((current) => {
+      const next = { ...current, [id]: !current[id] };
+      saveFieldTestChecks(next);
+      return next;
+    });
+  };
+
+  const handleOpenSos = () => {
+    setSosNotice('');
+    setSosStep(1);
+  };
+
+  const handleSosFirstYes = () => {
+    setSosStep(2);
+  };
+
+  const handleSosSecondYes = () => {
+    setSosStep(0);
+    setIsSosShareOpen(true);
+  };
+
+  const handleSmsSos = () => {
+    const { text } = formatSosMessage(sosLocation, gpsAccuracyM);
+    if (!guardianPhone.trim()) {
+      setSosNotice('보호자 번호를 먼저 저장해 주세요.');
+      return;
+    }
+    openSmsShare(text, guardianPhone);
+  };
+
+  const handleCall119 = () => {
+    openPhoneCall('119');
+  };
+
+  const handleCallGuardian = () => {
+    if (!guardianPhone.trim()) {
+      setSosNotice('보호자 번호를 먼저 저장해 주세요.');
+      return;
+    }
+    openPhoneCall(guardianPhone.replace(/[^\d+]/g, ''));
+  };
+
+  const handleSaveGuardian = () => {
+    saveGuardianPhone(guardianPhone);
+    setSosNotice('보호자 번호를 저장했습니다.');
+  };
+
+  const handleLocateMe = () => {
+    setMapError('');
+    setLocateToast('');
+    if (!navigator.geolocation) {
+      setMapError('이 기기에서는 위치를 쓸 수 없습니다. 위치 기능이 있는 휴대폰으로 열어 주세요.');
+      return;
+    }
+
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const next: PlaceLocation = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        };
+        let heading: number | null =
+          pos.coords.heading != null && Number.isFinite(pos.coords.heading) ? pos.coords.heading : headingDeg;
+        if ((heading == null || !Number.isFinite(heading)) && lastFixRef.current) {
+          const moved = Math.hypot(
+            next.latitude - lastFixRef.current.latitude,
+            next.longitude - lastFixRef.current.longitude
+          );
+          if (moved > 0.00001) {
+            heading = bearingDegrees(lastFixRef.current, next);
+          }
+        }
+        lastFixRef.current = next;
+        setUserLocation(next);
+        setHeadingDeg(heading);
+        setGpsAccuracyM(Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null);
+        saveLastGps({
+          latitude: next.latitude,
+          longitude: next.longitude,
+          accuracyM: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null,
+          heading,
+          savedAt: new Date().toISOString(),
+        });
+        setRecenterRequestId((id) => id + 1);
+        vibrateOnce();
+        setLocateToast('현재 위치로 이동했습니다.');
+        setIsLocating(false);
+        window.setTimeout(() => setLocateToast(''), 2500);
+      },
+      (err) => {
+        setIsLocating(false);
+        if (err.code === err.PERMISSION_DENIED) {
+          setMapError('위치 권한이 꺼져 있습니다. 설정에서 위치를 허용한 뒤 다시 눌러 주세요.');
+          return;
+        }
+        setMapError('현재 위치를 찾지 못했습니다. 하늘이 보이는 곳에서 다시 눌러 주세요.');
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 2000,
+      }
+    );
+  };
+
+  const handleKakaoSos = async () => {
+    const { text, mapsUrl } = formatSosMessage(sosLocation, gpsAccuracyM);
+    try {
+      await navigator.clipboard.writeText(text);
+      setSosNotice('SOS 글을 복사했습니다. 카카오톡이 열리면 붙여 보내 주세요.');
+    } catch {
+      setSosNotice('카카오톡이 열리면 SOS 글을 붙여 보내 주세요.');
+    }
+    openKakaoShare(text, mapsUrl);
+  };
+
+  const handleShareSos = async () => {
+    const { text, mapsUrl } = formatSosMessage(sosLocation, gpsAccuracyM);
+    const result = await shareOrCopy(text, mapsUrl);
+    if (result === 'shared') {
+      setSosNotice('공유 창을 열었습니다.');
+      return;
+    }
+    if (result === 'copied') {
+      setSosNotice('SOS 글을 복사했습니다. 카카오톡이나 문자에 붙여 보내 주세요.');
+      return;
+    }
+    setSosNotice('공유에 실패했습니다. 문자 또는 카카오톡 버튼을 눌러 주세요.');
+  };
+
   const handleSaveTravelMap = (e: React.FormEvent) => {
     e.preventDefault();
     const title = mapTitle.trim();
@@ -388,8 +908,8 @@ export default function HomePage() {
       setMapError('여행지도 이름을 입력해주세요.');
       return;
     }
-    if (displayedPlaces.length === 0) {
-      setMapError('저장할 장소가 없습니다. 먼저 장소를 수집하세요.');
+    if (displayedPlaces.length === 0 && (!currentRoute || currentRoute.points.length < 2)) {
+      setMapError('저장할 장소나 루트가 없습니다. 먼저 장소를 모으거나 루트를 가져오세요.');
       return;
     }
 
@@ -403,6 +923,7 @@ export default function HomePage() {
         sourceQuery: currentQuery || undefined,
         memo: mapMemo,
         checklist: mapChecklist,
+        route: currentRoute ?? undefined,
       });
 
       if (!updated) {
@@ -426,6 +947,7 @@ export default function HomePage() {
       sourceQuery: currentQuery || undefined,
       memo: mapMemo,
       checklist: mapChecklist,
+      route: currentRoute ?? undefined,
     };
 
     setTravelMaps(saveTravelMap(nextMap));
@@ -450,13 +972,21 @@ export default function HomePage() {
     setMapTitle(map.title);
     setMapMemo(map.memo ?? '');
     setMapChecklist(withPresetChecklistTexts(map.checklist ?? []));
+    setCurrentRoute(map.route ?? null);
+    setIsFollowMode(false);
     setSelectedPlaceId(null);
     setCurrentQuery(map.sourceQuery || map.title);
     if (snapshot[0]) {
       setCenter(snapshot[0].location);
+    } else if (map.route?.points[0]) {
+      setCenter(map.route.points[0]);
     }
     setMapError('');
-    setMapNotice(`'${map.title}' 여행지도를 불러왔습니다.`);
+    setMapNotice(
+      map.route
+        ? `'${map.title}' 여행지도와 루트를 불러왔습니다.`
+        : `'${map.title}' 여행지도를 불러왔습니다.`
+    );
   };
 
   const handleBackupTravelMaps = () => {
@@ -526,6 +1056,9 @@ export default function HomePage() {
               )
             : []
         );
+        if (keepLoadedId) {
+          setCurrentRoute(restored.find((map) => map.id === keepLoadedId)?.route ?? null);
+        }
         setMapError('');
         setMapNotice(`여행지도 ${restored.length}개를 복원했습니다.`);
         window.alert('여행지도를 복원했습니다.');
@@ -672,20 +1205,65 @@ export default function HomePage() {
     <main className="flex flex-col h-dvh bg-slate-50">
       <header className="flex items-center justify-between gap-2 px-3 py-2 bg-white border-b shrink-0 md:px-6 md:py-3 border-slate-200">
         <div className="flex items-center min-w-0 gap-2">
-          <span className="text-lg font-black md:text-xl text-amber-600">노을</span>
-          <span className="hidden text-sm font-semibold sm:inline text-slate-700">My Maps 자동 생성기 MVP</span>
+          <span className="text-xl font-black text-amber-600">노을</span>
+          <span className="hidden text-base font-semibold sm:inline text-slate-700">시니어 걷기 내비</span>
         </div>
-        
-        {displayedPlaces.length > 0 && (
-          <button
-            onClick={handleDownloadKml}
-            className="flex items-center gap-1 px-3 py-2.5 text-sm font-medium text-white transition-colors bg-blue-600 rounded-lg shadow shrink-0 min-h-11 hover:bg-blue-700 md:gap-2 md:px-4"
-          >
-            <span className="md:hidden">KML</span>
-            <span className="hidden md:inline">KML 다운로드 (My Maps용)</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {batterySupported && batteryPercent != null && (
+            <div
+              className={`flex items-center px-3 text-base font-black rounded-lg min-h-12 ${
+                batteryAlertBand === 'low5' || batteryAlertBand === 'low10'
+                  ? 'text-white bg-red-600'
+                  : batteryAlertBand === 'low20'
+                    ? 'text-black bg-amber-300'
+                    : 'text-slate-900 bg-slate-100'
+              }`}
+              title={batteryCharging ? '충전 중' : '배터리'}
+            >
+              {batteryCharging ? '🔌 ' : ''}배터리 {batteryPercent}%
+            </div>
+          )}
+          {!installed && (
+            <button
+              type="button"
+              onClick={() => void installApp()}
+              className="px-3 text-xl font-black text-white rounded-lg min-h-12 bg-slate-900"
+            >
+              📱 앱 설치
+            </button>
+          )}
+          {displayedPlaces.length > 0 && (
+            <button
+              onClick={handleDownloadKml}
+              className="flex items-center gap-1 px-3 py-2.5 text-base font-bold text-white transition-colors bg-blue-600 rounded-lg shadow min-h-12 hover:bg-blue-700"
+            >
+              <span className="md:hidden">KML</span>
+              <span className="hidden md:inline">KML 다운로드</span>
+            </button>
+          )}
+        </div>
       </header>
+      {installHint && (
+        <p className="px-3 py-2 text-base font-bold text-center text-slate-900 bg-amber-100">{installHint}</p>
+      )}
+      {batterySupported && batteryAlertBand === 'low20' && (
+        <div role="status" className="px-3 py-3 text-xl font-black text-center text-black shrink-0 bg-amber-300">
+          배터리 {batteryPercent}% · 충전해 주세요
+        </div>
+      )}
+      {batterySupported && batteryAlertBand === 'low10' && (
+        <div role="alert" className="px-3 py-3 text-xl font-black text-center text-white shrink-0 bg-red-600">
+          배터리 {batteryPercent}% · 충전을 준비하세요
+        </div>
+      )}
+      {!isOnline && (
+        <div
+          role="status"
+          className="px-3 py-3 text-xl font-black text-center text-white shrink-0 bg-slate-900"
+        >
+          오프라인 모드로 동작 중
+        </div>
+      )}
 
       <div className="workspace">
           <form onSubmit={handleSearch} className="p-3 border-b shrink-0 workspace-search md:p-4 border-slate-100">
@@ -696,12 +1274,12 @@ export default function HomePage() {
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
                 placeholder="예: 해운대, 여수, 강릉"
-                className="place-field flex-1 min-w-0 px-3 py-2.5 text-base border rounded-lg outline-none md:text-sm border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                className="place-field flex-1 min-w-0 px-3 py-2.5 text-base border rounded-lg outline-none md:text-base border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
               />
               <button
                 type="submit"
                 disabled={isLoading}
-                className="px-4 text-sm font-medium text-white transition-colors rounded-lg shrink-0 min-h-11 min-w-16 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
+                className="px-4 text-sm font-medium text-white transition-colors rounded-lg shrink-0 min-h-12 min-w-16 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
               >
                 {isLoading ? '검색 중...' : '생성'}
               </button>
@@ -717,12 +1295,12 @@ export default function HomePage() {
                 value={addKeyword}
                 onChange={(e) => setAddKeyword(e.target.value)}
                 placeholder="예: 광안리해수욕장"
-                className="place-field flex-1 min-w-0 px-3 py-2.5 text-base border rounded-lg outline-none md:text-sm border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                className="place-field flex-1 min-w-0 px-3 py-2.5 text-base border rounded-lg outline-none md:text-base border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
               />
               <button
                 type="submit"
                 disabled={isAdding}
-                className="px-4 text-sm font-medium text-white transition-colors rounded-lg shrink-0 min-h-11 min-w-16 bg-orange-500 hover:bg-orange-600 disabled:bg-slate-300"
+                className="px-4 text-sm font-medium text-white transition-colors rounded-lg shrink-0 min-h-12 min-w-16 bg-orange-500 hover:bg-orange-600 disabled:bg-slate-300"
               >
                 {isAdding ? '추가 중...' : '추가'}
               </button>
@@ -741,7 +1319,7 @@ export default function HomePage() {
               type="button"
               onClick={handleTogglePlaceList}
               aria-expanded={!isPlaceListCollapsed}
-              className="place-list-toggle flex items-center justify-between w-full gap-2 mb-3 text-left min-h-11 md:min-h-0 md:cursor-default"
+              className="place-list-toggle flex items-center justify-between w-full gap-2 mb-3 text-left min-h-12 md:min-h-0 md:cursor-default"
             >
               <span className="flex items-center min-w-0 gap-2 text-sm font-bold text-slate-800">
                 <span className="inline-block w-4 text-center md:hidden" aria-hidden>
@@ -834,7 +1412,7 @@ export default function HomePage() {
                         <button
                           type="button"
                           onClick={() => handleTogglePlaceMemo(place.id)}
-                          className={`px-3 text-sm font-semibold rounded-lg min-h-11 ${
+                          className={`px-3 text-sm font-semibold rounded-lg min-h-12 ${
                             place.memo?.trim()
                               ? 'text-amber-800 bg-amber-100 border border-amber-300'
                               : 'text-slate-600 bg-white border border-slate-300'
@@ -845,7 +1423,7 @@ export default function HomePage() {
                         <button
                           type="button"
                           onClick={() => handleOpenPlacePhotos(place.id)}
-                          className={`px-3 text-sm font-semibold rounded-lg min-h-11 ${
+                          className={`px-3 text-sm font-semibold rounded-lg min-h-12 ${
                             (place.photos?.length ?? 0) > 0
                               ? 'text-amber-800 bg-amber-100 border border-amber-300'
                               : 'text-slate-600 bg-white border border-slate-300'
@@ -923,11 +1501,11 @@ export default function HomePage() {
                   value={mapTitle}
                   onChange={(e) => setMapTitle(e.target.value)}
                   placeholder="예: 갈맷길 1-1"
-                  className="place-field flex-1 min-w-0 px-3 py-2.5 text-base bg-white border rounded-lg outline-none md:text-sm border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                  className="place-field flex-1 min-w-0 px-3 py-2.5 text-base bg-white border rounded-lg outline-none md:text-base border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
                 />
                 <button
                   type="submit"
-                  className="px-3 py-2 text-xs font-medium leading-tight text-white transition-colors rounded-lg shrink-0 min-h-11 max-w-[7.5rem] md:max-w-none bg-slate-700 hover:bg-slate-800"
+                  className="px-3 py-2 text-xs font-medium leading-tight text-white transition-colors rounded-lg shrink-0 min-h-12 max-w-[7.5rem] md:max-w-none bg-slate-700 hover:bg-slate-800"
                 >
                   {loadedMapId ? '여행지도 수정 저장' : '여행지도 저장'}
                 </button>
@@ -936,7 +1514,7 @@ export default function HomePage() {
             <button
               type="button"
               onClick={() => setIsMapMemoOpen(true)}
-              className={`w-full mb-3 px-3 text-sm font-semibold rounded-lg min-h-11 ${
+              className={`w-full mb-3 px-3 text-sm font-semibold rounded-lg min-h-12 ${
                 mapMemo.trim() || mapChecklist.length > 0
                   ? 'text-amber-800 bg-amber-100 border border-amber-300'
                   : 'text-slate-700 bg-white border border-slate-300'
@@ -948,28 +1526,117 @@ export default function HomePage() {
               type="button"
               onClick={handleGenerateBlog}
               disabled={isBlogGenerating}
-              className="w-full mb-3 px-3 text-sm font-semibold text-white rounded-lg min-h-11 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
+              className="w-full mb-3 px-3 text-sm font-semibold text-white rounded-lg min-h-12 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
             >
               {isBlogGenerating ? '사진 읽고 작성 중...' : '블로그 생성'}
             </button>
+            <input
+              ref={routeFileInputRef}
+              type="file"
+              accept=".gpx,.kml,application/gpx+xml,application/vnd.google-earth.kml+xml"
+              className="hidden"
+              onChange={handleImportRouteFile}
+            />
+            <button
+              type="button"
+              onClick={handleImportRouteClick}
+              className="w-full mb-2 px-3 text-base font-bold text-slate-900 bg-white border-2 border-slate-400 rounded-lg min-h-12 hover:bg-slate-50"
+            >
+              📂 루트 가져오기
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleFollowRoute}
+              className={`w-full mb-2 px-3 text-base font-bold rounded-lg min-h-12 ${
+                isFollowMode
+                  ? 'text-white bg-blue-800 hover:bg-blue-900'
+                  : 'text-white bg-blue-600 hover:bg-blue-700'
+              }`}
+            >
+              {isFollowMode ? '🚶 따라가기 종료' : '🚶 루트 따라가기'}
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleBatterySave}
+              aria-pressed={batterySave}
+              className={`w-full mb-2 px-3 text-xl font-black rounded-lg min-h-12 border-2 ${
+                batterySave
+                  ? 'text-amber-950 bg-amber-200 border-amber-500'
+                  : 'text-slate-800 bg-white border-slate-400'
+              }`}
+            >
+              {batterySave ? '배터리 절약 켜짐 (10초)' : '배터리 절약 꺼짐 (2초)'}
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleHighContrast}
+              aria-pressed={highContrast}
+              className="w-full mb-2 px-3 text-base font-bold text-white rounded-lg min-h-12 bg-black"
+            >
+              {highContrast ? '고대비 켜짐' : '고대비 모드'}
+            </button>
+            <label className="block mb-1 text-base font-bold text-slate-800">보호자 전화번호</label>
+            <div className="flex gap-2 mb-3">
+              <input
+                type="tel"
+                value={guardianPhone}
+                onChange={(e) => setGuardianPhone(e.target.value)}
+                placeholder="010-0000-0000"
+                className="place-field flex-1 min-w-0 px-3 text-base bg-white border-2 rounded-lg outline-none border-slate-400"
+              />
+              <button
+                type="button"
+                onClick={handleSaveGuardian}
+                className="px-3 text-base font-bold text-white rounded-lg min-h-12 bg-slate-800"
+              >
+                저장
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsFieldTestOpen((open) => !open)}
+              className="w-full mb-3 px-3 text-base font-bold text-slate-900 bg-white border-2 border-slate-500 rounded-lg min-h-12"
+            >
+              {isFieldTestOpen ? '현장 테스트 닫기' : '현장 테스트 체크리스트'}
+            </button>
+            {isFieldTestOpen && (
+              <div className="p-3 mb-3 bg-white border-2 border-slate-400 rounded-lg">
+                <p className="mb-2 text-xl font-black text-slate-900">갈맷길 · 제주올레 · 둘레길</p>
+                <ul className="space-y-2">
+                  {FIELD_TEST_ITEMS.map((item) => (
+                    <li key={item.id}>
+                      <label className="flex items-center gap-3 text-base font-bold min-h-12">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(fieldChecks[item.id])}
+                          onChange={() => handleToggleFieldCheck(item.id)}
+                          className="w-6 h-6"
+                        />
+                        {item.label}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="flex gap-2 mb-3 shrink-0">
               <button
                 type="button"
                 onClick={handleBackupTravelMaps}
-                className="flex-1 px-3 text-sm font-semibold text-amber-900 bg-amber-100 border border-amber-300 rounded-lg min-h-11 hover:bg-amber-200"
+                className="flex-1 px-3 text-sm font-semibold text-amber-900 bg-amber-100 border border-amber-300 rounded-lg min-h-12 hover:bg-amber-200"
               >
                 여행지도 백업
               </button>
               <button
                 type="button"
                 onClick={handleRestoreTravelMapsClick}
-                className="flex-1 px-3 text-sm font-semibold text-white rounded-lg min-h-11 bg-slate-700 hover:bg-slate-800"
+                className="flex-1 px-3 text-sm font-semibold text-white rounded-lg min-h-12 bg-slate-700 hover:bg-slate-800"
               >
                 여행지도 복원
               </button>
             </div>
-            {mapError && <p className="mb-2 text-xs text-red-500">{mapError}</p>}
-            {mapNotice && <p className="mb-2 text-xs text-slate-600">{mapNotice}</p>}
+            {mapError && <p className="mb-2 text-sm font-semibold text-red-600">{mapError}</p>}
+            {mapNotice && <p className="mb-2 text-sm font-semibold text-slate-700">{mapNotice}</p>}
 
             {travelMaps.length === 0 ? (
               <p className="text-xs text-slate-400">저장된 여행지도가 없습니다.</p>
@@ -978,7 +1645,7 @@ export default function HomePage() {
                 {travelMaps.map((map) => (
                   <div
                     key={map.id}
-                    onClick={() => setSelectedSavedMapId(map.id)}
+                    onClick={() => handleLoadTravelMap(map)}
                     className={`p-2.5 rounded-lg border cursor-pointer ${
                       selectedSavedMapId === map.id
                         ? 'border-slate-700 bg-white'
@@ -986,7 +1653,11 @@ export default function HomePage() {
                     }`}
                   >
                     <p className="text-sm font-semibold text-slate-800">{map.title}</p>
-                    <p className="mt-0.5 text-xs text-slate-500">장소 {map.places.length}개</p>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      생성일 {formatMapDate(map.createdAt)}
+                      {map.places.length > 0 ? ` · 장소 ${map.places.length}개` : ''}
+                      {map.route ? ' · 루트 있음' : ''}
+                    </p>
                     <div className="flex gap-2 mt-2">
                       <button
                         type="button"
@@ -995,9 +1666,9 @@ export default function HomePage() {
                           setSelectedSavedMapId(map.id);
                           handleLoadTravelMap(map);
                         }}
-                        className="flex-1 px-3 text-sm font-medium text-white rounded-lg min-h-11 bg-blue-600 hover:bg-blue-700"
+                        className="flex-1 px-3 text-sm font-medium text-white rounded-lg min-h-12 bg-blue-600 hover:bg-blue-700"
                       >
-                        불러오기
+                        불러오기{map.route ? ' (루트)' : ''}
                       </button>
                       <button
                         type="button"
@@ -1006,7 +1677,7 @@ export default function HomePage() {
                           setSelectedSavedMapId(map.id);
                           handleDeleteTravelMap(map);
                         }}
-                        className="flex-1 px-3 text-sm font-medium text-red-600 border border-red-200 rounded-lg min-h-11 hover:bg-red-50"
+                        className="flex-1 px-3 text-sm font-medium text-red-600 border border-red-200 rounded-lg min-h-12 hover:bg-red-50"
                       >
                         삭제
                       </button>
@@ -1023,9 +1694,167 @@ export default function HomePage() {
             places={displayedPlaces}
             selectedPlaceId={selectedPlaceId}
             onSelectPlace={(id) => setSelectedPlaceId(id)}
+            routePoints={routePoints}
+            userLocation={userLocation}
+            headingDeg={headingDeg}
+            followMode={isFollowMode}
+            recenterRequestId={recenterRequestId}
+            returnPoint={offRouteLevel === 30 ? returnPoint : null}
           />
+          {isFollowMode && (
+            <div className="absolute z-10 max-w-[11rem] px-3 py-2 text-base font-black text-slate-900 bg-white border-2 border-slate-800 rounded-lg shadow top-3 right-3">
+              {gpsAccuracyM == null ? (
+                <p>GPS 찾는 중</p>
+              ) : (
+                <>
+                  <p>GPS 정확도 : ±{Math.round(gpsAccuracyM)}m</p>
+                  {gpsAccuracyM >= WEAK_GPS_ACCURACY_M && (
+                    <p className="mt-1 text-red-700">GPS 신호 약함</p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+          {!isOnline && isFollowMode && (
+            <p className="absolute z-10 px-3 py-2 text-sm font-bold text-white rounded-lg shadow bottom-3 left-3 right-24 bg-slate-800/90">
+              지도 사진은 인터넷이 필요합니다. GPS 추적은 계속됩니다.
+            </p>
+          )}
         </div>
       </div>
+      {offRouteLevel === 20 && isFollowMode && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 pointer-events-none">
+          <div role="alert" className="pointer-events-auto w-full max-w-sm p-6 text-center bg-white border-4 border-red-600 rounded-2xl shadow-lg">
+            <p className="text-3xl font-black text-red-600">경로를 벗어났습니다.</p>
+          </div>
+        </div>
+      )}
+      {offRouteLevel === 30 && isFollowMode && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center p-4 pointer-events-none">
+          <div role="alert" className="pointer-events-auto w-full max-w-sm p-6 text-center bg-red-700 border-4 border-white rounded-2xl shadow-lg">
+            <p className="text-3xl font-black leading-snug text-white">경로를 벗어났습니다. 초록선을 따라 복귀하세요.</p>
+          </div>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={handleLocateMe}
+        disabled={isLocating}
+        className={`fixed z-[90] relative flex items-center justify-center text-3xl rounded-full shadow-[0_4px_12px_rgba(0,0,0,0.35)] right-4 border-4 border-white ${
+          userLocation
+            ? 'bg-blue-600 text-white'
+            : 'bg-slate-400 text-slate-100'
+        }`}
+        style={{
+          width: 64,
+          height: 64,
+          bottom: 'calc(1rem + 70px + 12px + env(safe-area-inset-bottom, 0px))',
+        }}
+        aria-label="현재 위치로 이동"
+      >
+        <span aria-hidden>🎯</span>
+        {userLocation && gpsAccuracyM != null && gpsAccuracyM >= WEAK_GPS_ACCURACY_M && (
+          <span className="absolute flex items-center justify-center w-7 h-7 text-base font-black text-white bg-red-600 rounded-full -top-1 -right-1">
+            !
+          </span>
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={handleOpenSos}
+        className="fixed z-[90] flex items-center justify-center text-xl font-black text-white bg-red-600 rounded-full shadow-lg right-4 hover:bg-red-700"
+        style={{
+          width: 70,
+          height: 70,
+          bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
+        }}
+        aria-label="긴급 SOS"
+      >
+        SOS
+      </button>
+      {batterySupported && batteryAlertBand === 'low5' && (
+        <div className="fixed inset-0 z-[72] flex items-center justify-center p-6 bg-red-800" role="alert">
+          <div className="text-center text-white">
+            <p className="text-4xl font-black leading-tight">배터리 {batteryPercent}%</p>
+            <p className="mt-6 text-3xl font-bold leading-snug">지금 충전하십시오</p>
+          </div>
+        </div>
+      )}
+      {(locateToast || returnToast) && (
+        <div
+          role="status"
+          className="fixed z-[92] left-1/2 -translate-x-1/2 px-4 py-3 text-xl font-black text-white bg-slate-900 rounded-xl shadow-lg"
+          style={{ bottom: 'calc(1rem + 70px + 88px + env(safe-area-inset-bottom, 0px))' }}
+        >
+          {returnToast || locateToast}
+        </div>
+      )}
+      {sosStep === 1 && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+          <button type="button" aria-label="SOS 취소" onClick={() => setSosStep(0)} className="absolute inset-0 bg-slate-900/50" />
+          <div className="relative z-10 w-full max-w-sm p-6 bg-white border-4 border-red-600 rounded-2xl shadow-lg">
+            <p className="text-2xl font-black text-center text-red-700">긴급 구조 요청을 보내시겠습니까?</p>
+            <p className="mt-3 text-base font-semibold text-center text-slate-700">1차 확인입니다. 실수면 취소를 누르세요.</p>
+            <div className="flex flex-col gap-3 mt-5">
+              <button type="button" onClick={handleSosFirstYes} className="w-full text-xl font-black text-white rounded-lg min-h-14 bg-red-600">
+                다음
+              </button>
+              <button type="button" onClick={() => setSosStep(0)} className="w-full text-xl font-bold text-slate-800 bg-white border-2 border-slate-400 rounded-lg min-h-14">
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {sosStep === 2 && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+          <button type="button" aria-label="SOS 취소" onClick={() => setSosStep(0)} className="absolute inset-0 bg-slate-900/50" />
+          <div className="relative z-10 w-full max-w-sm p-6 bg-white border-4 border-red-700 rounded-2xl shadow-lg">
+            <p className="text-2xl font-black text-center text-red-800">한 번 더 확인합니다.</p>
+            <p className="mt-3 text-xl font-bold text-center text-slate-900">119와 보호자에게 알릴까요?</p>
+            <div className="flex flex-col gap-3 mt-5">
+              <button type="button" onClick={handleSosSecondYes} className="w-full text-xl font-black text-white rounded-lg min-h-14 bg-red-700">
+                예, 알리기
+              </button>
+              <button type="button" onClick={() => setSosStep(0)} className="w-full text-xl font-bold text-slate-800 bg-white border-2 border-slate-400 rounded-lg min-h-14">
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isSosShareOpen && (
+        <div className="fixed inset-0 z-[95] flex items-end justify-center md:items-center md:p-6">
+          <button type="button" aria-label="SOS 닫기" onClick={() => setIsSosShareOpen(false)} className="absolute inset-0 bg-slate-900/50" />
+          <div className="relative z-10 w-full max-w-sm p-5 bg-white rounded-t-2xl md:rounded-2xl shadow-lg">
+            <h2 className="text-xl font-black text-slate-900">SOS 비상벨</h2>
+            <p className="mt-2 text-base font-semibold whitespace-pre-wrap text-slate-800">
+              {formatSosMessage(sosLocation, gpsAccuracyM).text}
+            </p>
+            {sosNotice && <p className="mt-2 text-base font-bold text-amber-800">{sosNotice}</p>}
+            <div className="flex flex-col gap-3 mt-4">
+              <button type="button" onClick={handleCall119} className="w-full text-xl font-black text-white rounded-lg min-h-14 bg-red-600">
+                1. 119 전화
+              </button>
+              <button type="button" onClick={handleCallGuardian} className="w-full text-xl font-black text-white rounded-lg min-h-14 bg-orange-600">
+                2. 보호자 연락
+              </button>
+              <button type="button" onClick={handleSmsSos} className="w-full text-xl font-black text-white rounded-lg min-h-14 bg-slate-800">
+                3. 현재 위치 전송
+              </button>
+              <button type="button" onClick={() => void handleKakaoSos()} className="w-full text-lg font-bold text-slate-900 rounded-lg min-h-12 bg-yellow-300">
+                카카오톡
+              </button>
+              <button type="button" onClick={() => void handleShareSos()} className="w-full text-lg font-bold text-white rounded-lg min-h-12 bg-blue-600">
+                공유하기
+              </button>
+              <button type="button" onClick={() => setIsSosShareOpen(false)} className="w-full text-xl font-bold text-slate-800 bg-white border-2 border-slate-400 rounded-lg min-h-14">
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {selectedPlace && (
         <PlaceDetailCard
           place={selectedPlace}
@@ -1080,7 +1909,7 @@ export default function HomePage() {
                 type="button"
                 onClick={handleCopyBlog}
                 disabled={!blogDraft || isBlogGenerating}
-                className="flex-1 min-w-[7rem] text-sm font-semibold text-white rounded-lg min-h-11 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
+                className="flex-1 min-w-[7rem] text-sm font-semibold text-white rounded-lg min-h-12 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
               >
                 복사
               </button>
@@ -1088,14 +1917,14 @@ export default function HomePage() {
                 type="button"
                 onClick={handleDownloadBlogMarkdown}
                 disabled={!blogDraft || isBlogGenerating}
-                className="flex-1 min-w-[7rem] text-sm font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg min-h-11 hover:bg-slate-50 disabled:text-slate-400"
+                className="flex-1 min-w-[7rem] text-sm font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg min-h-12 hover:bg-slate-50 disabled:text-slate-400"
               >
                 Markdown 저장
               </button>
               <button
                 type="button"
                 onClick={() => setIsBlogOpen(false)}
-                className="flex-1 min-w-[7rem] text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg min-h-11 hover:bg-slate-50"
+                className="flex-1 min-w-[7rem] text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg min-h-12 hover:bg-slate-50"
               >
                 닫기
               </button>
@@ -1137,7 +1966,7 @@ export default function HomePage() {
                     type="button"
                     onClick={() => handleAddChecklistPreset(preset.id)}
                     disabled={added}
-                    className={`px-3 py-2 text-sm font-semibold rounded-lg min-h-11 ${
+                    className={`px-3 py-2 text-sm font-semibold rounded-lg min-h-12 ${
                       added
                         ? 'text-slate-400 bg-slate-100 border border-slate-200'
                         : 'text-slate-800 bg-white border border-slate-300 hover:border-amber-400 hover:bg-amber-50'
@@ -1206,14 +2035,14 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={handleSaveMapNotes}
-                className="flex-1 text-sm font-semibold text-white rounded-lg min-h-11 bg-amber-600 hover:bg-amber-700"
+                className="flex-1 text-sm font-semibold text-white rounded-lg min-h-12 bg-amber-600 hover:bg-amber-700"
               >
                 저장
               </button>
               <button
                 type="button"
                 onClick={() => setIsMapMemoOpen(false)}
-                className="flex-1 text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg min-h-11 hover:bg-slate-50"
+                className="flex-1 text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg min-h-12 hover:bg-slate-50"
               >
                 닫기
               </button>

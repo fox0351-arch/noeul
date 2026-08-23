@@ -27,7 +27,7 @@ body {
 
 .place-field {
   color: #111111;
-  min-height: 44px;
+  min-height: 48px;
   font-size: 16px;
 }
 
@@ -62,8 +62,8 @@ body {
 
 @media (min-width: 768px) {
   .place-field {
-    min-height: 38px;
-    font-size: 14px;
+    min-height: 48px;
+    font-size: 16px;
   }
 
   .map-pane {
@@ -112,6 +112,37 @@ body {
   }
 }
 
+html.high-contrast,
+html.high-contrast body {
+  background: #000000 !important;
+  color: #ffffff !important;
+}
+
+html.high-contrast header,
+html.high-contrast .workspace,
+html.high-contrast .workspace-search,
+html.high-contrast .workspace-add,
+html.high-contrast .workspace-places,
+html.high-contrast .workspace-saved {
+  background: #000000 !important;
+  color: #ffffff !important;
+  border-color: #ffffff !important;
+}
+
+html.high-contrast .place-field,
+html.high-contrast input,
+html.high-contrast textarea {
+  background: #111111 !important;
+  color: #ffff00 !important;
+  border: 3px solid #ffff00 !important;
+}
+
+html.high-contrast button {
+  min-height: 48px;
+  font-size: 18px;
+  border-width: 3px;
+}
+
 @media (max-width: 767px) {
   .map-pane {
     flex: none;
@@ -123,7 +154,7 @@ body {
   }
 
   .place-list-toggle {
-    min-height: 44px;
+    min-height: 48px;
   }
 
   .workspace-places,

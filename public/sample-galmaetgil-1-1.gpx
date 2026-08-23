@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="noeul-test">
+  <trk>
+    <name>갈맷길 1-1 테스트</name>
+    <trkseg>
+      <trkpt lat="35.1587" lon="129.1604"></trkpt>
+      <trkpt lat="35.1598" lon="129.1618"></trkpt>
+      <trkpt lat="35.1612" lon="129.1635"></trkpt>
+      <trkpt lat="35.1626" lon="129.1652"></trkpt>
+      <trkpt lat="35.1638" lon="129.1670"></trkpt>
+    </trkseg>
+  </trk>
+  <wpt lat="35.1587" lon="129.1604"><name>민락수변공원</name></wpt>
+  <wpt lat="35.1638" lon="129.1670"><name>광안리</name></wpt>
+</gpx>

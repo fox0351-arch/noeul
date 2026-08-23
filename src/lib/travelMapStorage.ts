@@ -1,4 +1,5 @@
 import { PlaceItem, PlacePhoto } from '@/types/place';
+import { isTravelRoute } from '@/types/route';
 import { TravelMap, TravelMapChecklistItem } from '@/types/travelMap';
 
 const STORAGE_KEY = 'noeul.travelMaps.v1';
@@ -56,7 +57,8 @@ function isTravelMap(value: unknown): value is TravelMap {
     Array.isArray(map.places) &&
     map.places.every(isPlaceItem) &&
     (map.memo === undefined || typeof map.memo === 'string') &&
-    (map.checklist === undefined || (Array.isArray(map.checklist) && map.checklist.every(isChecklistItem)))
+    (map.checklist === undefined || (Array.isArray(map.checklist) && map.checklist.every(isChecklistItem))) &&
+    (map.route === undefined || isTravelRoute(map.route))
   );
 }
 
@@ -113,6 +115,7 @@ export function updateTravelMap(
   updates: Pick<TravelMap, 'title' | 'places' | 'sourceQuery'> & {
     memo?: string;
     checklist?: TravelMap['checklist'];
+    route?: TravelMap['route'];
   }
 ): TravelMap[] | null {
   const store = readStore();
@@ -132,6 +135,7 @@ export function updateTravelMap(
             sourceQuery: updates.sourceQuery,
             memo: updates.memo !== undefined ? updates.memo : map.memo,
             checklist: updates.checklist !== undefined ? updates.checklist : map.checklist,
+            route: updates.route !== undefined ? updates.route : map.route,
             updatedAt: now,
           }
         : map

@@ -1,0 +1,108 @@
+import { PlaceLocation } from '@/types/place';
+
+const EARTH_RADIUS_M = 6371000;
+
+function toRad(degrees: number): number {
+  return (degrees * Math.PI) / 180;
+}
+
+export function haversineMeters(a: PlaceLocation, b: PlaceLocation): number {
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function projectToMeters(point: PlaceLocation, originLat: number): { x: number; y: number } {
+  const latRad = toRad(originLat);
+  return {
+    x: toRad(point.longitude) * EARTH_RADIUS_M * Math.cos(latRad),
+    y: toRad(point.latitude) * EARTH_RADIUS_M,
+  };
+}
+
+function closestOnSegment(
+  point: PlaceLocation,
+  start: PlaceLocation,
+  end: PlaceLocation
+): { point: PlaceLocation; distance: number } {
+  const originLat = (start.latitude + end.latitude) / 2;
+  const p = projectToMeters(point, originLat);
+  const a = projectToMeters(start, originLat);
+  const b = projectToMeters(end, originLat);
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const abLenSq = abx * abx + aby * aby;
+  if (abLenSq === 0) {
+    return { point: start, distance: haversineMeters(point, start) };
+  }
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * abx + (p.y - a.y) * aby) / abLenSq));
+  const closest: PlaceLocation = {
+    latitude: start.latitude + (end.latitude - start.latitude) * t,
+    longitude: start.longitude + (end.longitude - start.longitude) * t,
+  };
+  return { point: closest, distance: haversineMeters(point, closest) };
+}
+
+function distanceToSegmentMeters(
+  point: PlaceLocation,
+  start: PlaceLocation,
+  end: PlaceLocation
+): number {
+  return closestOnSegment(point, start, end).distance;
+}
+
+export function closestPointOnRoute(
+  point: PlaceLocation,
+  route: PlaceLocation[]
+): PlaceLocation | null {
+  if (route.length === 0) return null;
+  if (route.length === 1) return route[0];
+
+  let best = closestOnSegment(point, route[0], route[1]);
+  for (let i = 1; i < route.length - 1; i += 1) {
+    const next = closestOnSegment(point, route[i], route[i + 1]);
+    if (next.distance < best.distance) best = next;
+  }
+  return best.point;
+}
+
+export function distanceToRouteMeters(
+  point: PlaceLocation,
+  route: PlaceLocation[]
+): number {
+  if (route.length === 0) return Number.POSITIVE_INFINITY;
+  if (route.length === 1) return haversineMeters(point, route[0]);
+
+  let min = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < route.length - 1; i += 1) {
+    const next = distanceToSegmentMeters(point, route[i], route[i + 1]);
+    if (next < min) min = next;
+  }
+  return min;
+}
+
+export function bearingDegrees(from: PlaceLocation, to: PlaceLocation): number {
+  const fromLat = toRad(from.latitude);
+  const toLat = toRad(to.latitude);
+  const dLon = toRad(to.longitude - from.longitude);
+  const y = Math.sin(dLon) * Math.cos(toLat);
+  const x = Math.cos(fromLat) * Math.sin(toLat) - Math.sin(fromLat) * Math.cos(toLat) * Math.cos(dLon);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+export const OFF_ROUTE_THRESHOLD_M = 20;
+export const SEVERE_OFF_ROUTE_THRESHOLD_M = 30;
+export const WEAK_GPS_ACCURACY_M = 30;
+
+export type OffRouteLevel = 0 | 20 | 30;
+
+export function offRouteLevelFromDistance(distanceMeters: number): OffRouteLevel {
+  if (distanceMeters >= SEVERE_OFF_ROUTE_THRESHOLD_M) return 30;
+  if (distanceMeters >= OFF_ROUTE_THRESHOLD_M) return 20;
+  return 0;
+}
