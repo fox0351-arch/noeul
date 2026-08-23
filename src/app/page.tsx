@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PlaceDetails, PlaceItem, PlaceLocation, PlacesSearchResponse } from '@/types/place';
 import { generateKML, downloadKmlFile } from '@/lib/kmlBuilder';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
@@ -41,7 +41,7 @@ import { loadGuardianPhone, saveGuardianPhone } from '@/lib/guardianStorage';
 import { FIELD_TEST_ITEMS, loadFieldTestChecks, saveFieldTestChecks } from '@/lib/fieldTestChecklist';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
 import { loadUserSettings, saveUserSettings, type VoiceStyle } from '@/lib/userData';
-import GoogleMapViewer from '@/components/GoogleMapViewer';
+import GoogleMapViewer, { ARROW_ROTATION_OFFSETS, type FollowCameraDebug } from '@/components/GoogleMapViewer';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
 
 function formatMapDate(iso: string): string {
@@ -132,6 +132,13 @@ export default function HomePage() {
   const mapRotatingRef = useRef(false);
   const gpsBufferRef = useRef<PlaceLocation[]>([]);
   const lastGoodHeadingRef = useRef<number | null>(null);
+  const lastRawGpsRef = useRef<PlaceLocation | null>(null);
+  const headingOriginRef = useRef<PlaceLocation | null>(null);
+  const currentRouteRef = useRef(currentRoute);
+  currentRouteRef.current = currentRoute;
+  const [followCameraDebug, setFollowCameraDebug] = useState<FollowCameraDebug | null>(null);
+  const [gpsReceiveCount, setGpsReceiveCount] = useState(0);
+  const [arrowRotationOffset, setArrowRotationOffset] = useState(-90);
   const { installed, hint: installHint, install: installApp } = usePwaInstall();
 
   const displayedPlaces = useMemo(() => {
@@ -168,6 +175,14 @@ export default function HomePage() {
 
   const sosLocation = userLocation ?? lastGpsToLocation(loadLastGps());
 
+  const handleSelectPlace = useCallback((id: string) => {
+    setSelectedPlaceId(id);
+  }, []);
+
+  const handleFollowCamera = useCallback((info: FollowCameraDebug) => {
+    setFollowCameraDebug(info);
+  }, []);
+
   useEffect(() => {
     setManualPlaces(loadManualPlaces());
     setHasLoadedManualPlaces(true);
@@ -179,6 +194,11 @@ export default function HomePage() {
     setVoiceStyle(prefs.voiceStyle);
     setHeadingUpMode(prefs.headingUp);
     setActiveVoiceStyle(prefs.voiceStyle);
+    const storedArrow = window.localStorage.getItem('noeul.arrowRotationOffset.v1');
+    const parsedArrow = storedArrow == null ? NaN : Number(storedArrow);
+    if (ARROW_ROTATION_OFFSETS.includes(parsedArrow as (typeof ARROW_ROTATION_OFFSETS)[number])) {
+      setArrowRotationOffset(parsedArrow);
+    }
     const contrastOn = window.localStorage.getItem('noeul.highContrast.v1') === '1';
     setHighContrast(contrastOn);
     document.documentElement.classList.toggle('high-contrast', contrastOn);
@@ -301,7 +321,9 @@ export default function HomePage() {
     const intervalMs = batterySave ? 10000 : 800;
     let lastAcceptedAt = 0;
     gpsBufferRef.current = [];
+    headingOriginRef.current = lastRawGpsRef.current;
     let watchId: number | null = null;
+    console.info('[노을-follow] watch start', { isFollowMode: true, intervalMs });
 
     const applyOffRoute = (distance: number) => {
       const nextLevel = offRouteLevelFromDistance(distance);
@@ -348,11 +370,14 @@ export default function HomePage() {
       if (accuracy != null && accuracy > MAX_ACCEPT_GPS_ACCURACY_M) return;
 
       lastAcceptedAt = now;
+      setGpsReceiveCount((n) => n + 1);
 
       const raw: PlaceLocation = {
         latitude: coords.latitude,
         longitude: coords.longitude,
       };
+      const prevRaw = lastRawGpsRef.current;
+      lastRawGpsRef.current = raw;
       gpsBufferRef.current = [...gpsBufferRef.current, raw].slice(-GPS_SMOOTH_COUNT);
       const next = averageLocations(gpsBufferRef.current);
       const prevFix = lastFixRef.current;
@@ -361,15 +386,21 @@ export default function HomePage() {
       const movedM = prevFix ? haversineMeters(prevFix, next) : 0;
 
       let heading: number | null = lastGoodHeadingRef.current;
-      if (movedM >= MIN_HEADING_MOVE_M && prevFix) {
-        heading = bearingDegrees(prevFix, next);
-      } else if (
-        coords.heading != null &&
-        Number.isFinite(coords.heading) &&
-        speedKmh != null &&
-        speedKmh >= MIN_MAP_ROTATE_KMH
-      ) {
-        heading = coords.heading;
+      if (!headingOriginRef.current) headingOriginRef.current = prevRaw ?? raw;
+      const origin = headingOriginRef.current;
+      const movedFromOrigin = origin ? haversineMeters(origin, raw) : 0;
+      if (origin && movedFromOrigin >= Math.max(8, MIN_HEADING_MOVE_M)) {
+        heading = bearingDegrees(origin, raw);
+        headingOriginRef.current = raw;
+        console.info('[노을-heading]', {
+          fromLat: origin.latitude,
+          fromLng: origin.longitude,
+          toLat: raw.latitude,
+          toLng: raw.longitude,
+          movedM: Math.round(movedFromOrigin * 10) / 10,
+          bearing: Math.round(heading),
+          gpsHeading: coords.heading,
+        });
       }
 
       if (speedKmh != null) {
@@ -397,8 +428,9 @@ export default function HomePage() {
       });
       setMapError('');
 
-      if (!currentRoute || currentRoute.points.length < 2) return;
-      const routeLocations = routePointsToLocations(currentRoute.points);
+      const route = currentRouteRef.current;
+      if (!route || route.points.length < 2) return;
+      const routeLocations = routePointsToLocations(route.points);
       const distance = distanceToRouteMeters(next, routeLocations);
       if (distance >= 20) {
         setReturnPoint(closestPointOnRoute(next, routeLocations));
@@ -444,8 +476,13 @@ export default function HomePage() {
       cancelled = true;
       if (watchId != null) navigator.geolocation.clearWatch(watchId);
       stopRepeatingSpeech();
+      console.info('[노을-follow] watch stop');
     };
-  }, [isFollowMode, currentRoute, batterySave]);
+  }, [isFollowMode, batterySave]);
+
+  useEffect(() => {
+    console.info('[노을-follow] isFollowMode 변경', isFollowMode);
+  }, [isFollowMode]);
 
   useEffect(() => {
     if (!selectedPlaceId) {
@@ -769,6 +806,7 @@ export default function HomePage() {
     setMapNotice('');
     if (isFollowMode) {
       setIsFollowMode(false);
+      setFollowCameraDebug(null);
       setMapNotice('루트 따라가기를 종료했습니다.');
       return;
     }
@@ -794,6 +832,9 @@ export default function HomePage() {
     }
     mapRotatingRef.current = false;
     gpsBufferRef.current = [];
+    headingOriginRef.current = lastRawGpsRef.current;
+    setGpsReceiveCount(0);
+    setFollowCameraDebug(null);
     lastGoodHeadingRef.current = last?.heading ?? lastGoodHeadingRef.current;
     warmSpeechVoices();
     setIsFollowMode(true);
@@ -1797,7 +1838,7 @@ export default function HomePage() {
             center={center}
             places={displayedPlaces}
             selectedPlaceId={selectedPlaceId}
-            onSelectPlace={(id) => setSelectedPlaceId(id)}
+            onSelectPlace={handleSelectPlace}
             routePoints={routePoints}
             userLocation={userLocation}
             headingDeg={headingDeg}
@@ -1806,7 +1847,50 @@ export default function HomePage() {
             mapHeadingDeg={mapHeadingDeg}
             recenterRequestId={recenterRequestId}
             returnPoint={offRouteLevel >= 20 ? returnPoint : null}
+            onFollowCamera={handleFollowCamera}
+            arrowRotationOffset={arrowRotationOffset}
           />
+          {isFollowMode && (
+            <div className="absolute z-20 px-2 py-1.5 text-[11px] font-bold leading-tight text-white rounded bottom-2 left-2 bg-black/75">
+              <p>GPS수신 {gpsReceiveCount}</p>
+              <p>setCenter {followCameraDebug?.setCenterCount ?? 0}</p>
+              <p>panTo {followCameraDebug?.panToCount ?? 0}</p>
+              <p>moveCamera {followCameraDebug?.moveCameraCount ?? 0}</p>
+              <p>
+                지도중심{' '}
+                {followCameraDebug?.mapCenterLat == null
+                  ? '-'
+                  : `${followCameraDebug.mapCenterLat.toFixed(5)}, ${followCameraDebug.mapCenterLng?.toFixed(5)}`}
+              </p>
+              <p>
+                내위치{' '}
+                {userLocation
+                  ? `${userLocation.latitude.toFixed(5)}, ${userLocation.longitude.toFixed(5)}`
+                  : '-'}
+              </p>
+              <p>중심오차 {followCameraDebug?.centerDeltaM ?? '-'}m</p>
+              <p>
+                화살표 방위{' '}
+                {followCameraDebug?.heading == null ? '-' : `${Math.round(followCameraDebug.heading)}°`}
+                {' → 적용 '}
+                {followCameraDebug?.arrowApplied == null ? '-' : `${Math.round(followCameraDebug.arrowApplied)}°`}
+              </p>
+              <button
+                type="button"
+                className="mt-1 px-2 py-1 text-xs font-black text-slate-900 bg-yellow-300 rounded"
+                onClick={() => {
+                  const idx = ARROW_ROTATION_OFFSETS.indexOf(
+                    arrowRotationOffset as (typeof ARROW_ROTATION_OFFSETS)[number]
+                  );
+                  const next = ARROW_ROTATION_OFFSETS[(idx + 1) % ARROW_ROTATION_OFFSETS.length];
+                  setArrowRotationOffset(next);
+                  window.localStorage.setItem('noeul.arrowRotationOffset.v1', String(next));
+                }}
+              >
+                화살표 보정 {arrowRotationOffset === 0 ? 'bearing' : arrowRotationOffset > 0 ? `bearing+${arrowRotationOffset}` : `bearing${arrowRotationOffset}`}
+              </button>
+            </div>
+          )}
           {isFollowMode && (
             <div className="absolute z-20 flex flex-col items-end gap-1.5 top-2 right-12 pointer-events-none">
               <button

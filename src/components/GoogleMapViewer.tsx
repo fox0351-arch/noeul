@@ -12,26 +12,112 @@ const ROUTE_STROKE_WEIGHT = 6;
 const ROUTE_STROKE_OPACITY = 0.7;
 const RETURN_STROKE_COLOR = '#00FF66';
 const RETURN_STROKE_WEIGHT = 12;
+const WALK_ZOOM = 17;
+/** Google Maps Symbol 기본 방향은 +X(동). rotation 0 = 동. */
+const HEADING_ARROW_PATH = 'M 4 0 L -2.4 -2.8 L -1 0 L -2.4 2.8 Z';
+export const ARROW_ROTATION_OFFSETS = [0, 90, -90, 180] as const;
+
+export type FollowCameraDebug = {
+  followMode: boolean;
+  setCenterCount: number;
+  panToCount: number;
+  moveCameraCount: number;
+  lat: number;
+  lng: number;
+  mapCenterLat: number | null;
+  mapCenterLng: number | null;
+  centerDeltaM: number | null;
+  heading: number | null;
+  arrowApplied: number | null;
+  arrowOffset: number;
+};
 
 function applyNavCamera(
   map: google.maps.Map,
   user: PlaceLocation,
   headingUp: boolean,
-  mapHeadingDeg: number | null
-) {
+  headingDeg: number | null,
+  counts: { setCenter: number; panTo: number; moveCamera: number }
+): { lat: number; lng: number } {
   const pos = { lat: user.latitude, lng: user.longitude };
-  map.panTo(pos);
+  const zoom = Math.max(map.getZoom() ?? WALK_ZOOM, WALK_ZOOM);
+  const heading =
+    headingUp && headingDeg != null && Number.isFinite(headingDeg) ? headingDeg : 0;
 
-  const camera = map as google.maps.Map & { setHeading?: (heading: number) => void };
+  const camera = map as google.maps.Map & {
+    moveCamera?: (opts: {
+      center: google.maps.LatLngLiteral;
+      heading?: number;
+      zoom?: number;
+      tilt?: number;
+    }) => void;
+  };
+
   try {
-    if (headingUp && mapHeadingDeg != null && Number.isFinite(mapHeadingDeg)) {
-      camera.setHeading?.(mapHeadingDeg);
+    map.setCenter(pos);
+    counts.setCenter += 1;
+  } catch {
+    // setCenter 실패
+  }
+
+  try {
+    map.panTo(pos);
+    counts.panTo += 1;
+  } catch {
+    // panTo 실패
+  }
+
+  try {
+    if (typeof camera.moveCamera === 'function') {
+      camera.moveCamera({
+        center: pos,
+        zoom,
+        heading,
+        tilt: 0,
+      });
+      counts.moveCamera += 1;
     } else {
-      camera.setHeading?.(0);
+      map.setZoom(zoom);
     }
   } catch {
-    // heading 미지원
+    try {
+      map.setZoom(zoom);
+    } catch {
+      // zoom 실패
+    }
   }
+
+  const after = map.getCenter();
+  return {
+    lat: after?.lat() ?? pos.lat,
+    lng: after?.lng() ?? pos.lng,
+  };
+}
+
+function metersBetween(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function headingArrowIcon(rotation: number): google.maps.Symbol {
+  return {
+    path: HEADING_ARROW_PATH,
+    scale: 5,
+    fillColor: '#1d4ed8',
+    fillOpacity: 1,
+    strokeColor: '#ffffff',
+    strokeWeight: 1.5,
+    rotation,
+    anchor: new google.maps.Point(0, 0),
+  };
 }
 
 interface GoogleMapViewerProps {
@@ -51,6 +137,8 @@ interface GoogleMapViewerProps {
   recenterRequestId?: number;
   /** 경로 이탈 시 가장 가까운 루트 복귀 지점 */
   returnPoint?: PlaceLocation | null;
+  onFollowCamera?: (info: FollowCameraDebug) => void;
+  arrowRotationOffset?: number;
 }
 
 export default function GoogleMapViewer({
@@ -66,6 +154,8 @@ export default function GoogleMapViewer({
   mapHeadingDeg = null,
   recenterRequestId = 0,
   returnPoint = null,
+  onFollowCamera,
+  arrowRotationOffset = -90,
 }: GoogleMapViewerProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
@@ -77,6 +167,17 @@ export default function GoogleMapViewer({
   const returnLineRef = useRef<google.maps.Polyline | null>(null);
   const returnHaloRef = useRef<google.maps.Circle | null>(null);
   const returnPulseTimerRef = useRef<number | null>(null);
+  const followModeRef = useRef(followMode);
+  const onSelectPlaceRef = useRef(onSelectPlace);
+  const onFollowCameraRef = useRef(onFollowCamera);
+  const panToCountRef = useRef(0);
+  const setCenterCountRef = useRef(0);
+  const moveCameraCountRef = useRef(0);
+  const lastUserPosRef = useRef<google.maps.LatLngLiteral | null>(null);
+  const prevFollowRef = useRef(false);
+  followModeRef.current = followMode;
+  onSelectPlaceRef.current = onSelectPlace;
+  onFollowCameraRef.current = onFollowCamera;
   const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
@@ -99,10 +200,11 @@ export default function GoogleMapViewer({
           streetViewControl: false,
           fullscreenControl: true,
           rotateControl: false,
+          gestureHandling: 'greedy',
         };
-        const renderingType = google.maps.RenderingType?.VECTOR;
-        if (renderingType) {
-          mapOptions.renderingType = renderingType;
+        const raster = google.maps.RenderingType?.RASTER;
+        if (raster) {
+          mapOptions.renderingType = raster;
         }
 
         const map = new google.maps.Map(mapRef.current, mapOptions);
@@ -156,7 +258,7 @@ export default function GoogleMapViewer({
       });
 
       marker.addListener('click', () => {
-        onSelectPlace(place.id);
+        onSelectPlaceRef.current(place.id);
       });
 
       markersRef.current.push(marker);
@@ -183,10 +285,10 @@ export default function GoogleMapViewer({
       });
     }
 
-    if (hasBounds && !followMode) {
+    if (hasBounds && !followModeRef.current) {
       map.fitBounds(bounds);
     }
-  }, [places, onSelectPlace, routePoints, mapReady, followMode]);
+  }, [places, routePoints, mapReady]);
 
   useEffect(() => {
     if (!mapReady || !mapInstanceRef.current || !window.google) return;
@@ -201,6 +303,14 @@ export default function GoogleMapViewer({
     }
 
     const position = { lat: userLocation.latitude, lng: userLocation.longitude };
+    lastUserPosRef.current = position;
+
+    if (followMode && !prevFollowRef.current) {
+      setCenterCountRef.current = 0;
+      panToCountRef.current = 0;
+      moveCameraCountRef.current = 0;
+    }
+    prevFollowRef.current = followMode;
 
     if (!userMarkerRef.current) {
       userMarkerRef.current = new google.maps.Marker({
@@ -222,7 +332,10 @@ export default function GoogleMapViewer({
       userMarkerRef.current.setMap(map);
     }
 
-    const arrowRotation = headingDeg != null && Number.isFinite(headingDeg) ? headingDeg : 0;
+    const arrowApplied =
+      headingDeg != null && Number.isFinite(headingDeg)
+        ? (((headingDeg + arrowRotationOffset) % 360) + 360) % 360
+        : 0;
 
     if (headingDeg != null && Number.isFinite(headingDeg)) {
       if (!headingMarkerRef.current) {
@@ -230,44 +343,71 @@ export default function GoogleMapViewer({
           position,
           map,
           clickable: false,
+          optimized: false,
           zIndex: 11,
-          icon: {
-            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-            scale: 7,
-            fillColor: '#1d4ed8',
-            fillOpacity: 1,
-            strokeColor: '#ffffff',
-            strokeWeight: 2,
-            rotation: arrowRotation,
-            anchor: new google.maps.Point(0, 2.4),
-          },
+          icon: headingArrowIcon(arrowApplied),
         });
       } else {
         headingMarkerRef.current.setPosition(position);
-        headingMarkerRef.current.setIcon({
-          path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-          scale: 7,
-          fillColor: '#1d4ed8',
-          fillOpacity: 1,
-          strokeColor: '#ffffff',
-          strokeWeight: 2,
-          rotation: arrowRotation,
-          anchor: new google.maps.Point(0, 2.4),
-        });
+        headingMarkerRef.current.setIcon(headingArrowIcon(arrowApplied));
         headingMarkerRef.current.setMap(map);
       }
     }
 
     if (followMode) {
-      applyNavCamera(map, userLocation, headingUp, mapHeadingDeg);
+      const counts = {
+        setCenter: setCenterCountRef.current,
+        panTo: panToCountRef.current,
+        moveCamera: moveCameraCountRef.current,
+      };
+      const after = applyNavCamera(map, userLocation, headingUp, mapHeadingDeg, counts);
+      setCenterCountRef.current = counts.setCenter;
+      panToCountRef.current = counts.panTo;
+      moveCameraCountRef.current = counts.moveCamera;
+      const debug: FollowCameraDebug = {
+        followMode: true,
+        setCenterCount: counts.setCenter,
+        panToCount: counts.panTo,
+        moveCameraCount: counts.moveCamera,
+        lat: userLocation.latitude,
+        lng: userLocation.longitude,
+        mapCenterLat: after.lat,
+        mapCenterLng: after.lng,
+        centerDeltaM: Math.round(
+          metersBetween(
+            { lat: userLocation.latitude, lng: userLocation.longitude },
+            { lat: after.lat, lng: after.lng }
+          )
+        ),
+        heading: headingDeg,
+        arrowApplied,
+        arrowOffset: arrowRotationOffset,
+      };
+      console.info('[노을-follow] camera', debug);
+      onFollowCameraRef.current?.(debug);
     }
-  }, [userLocation, headingDeg, followMode, headingUp, mapHeadingDeg, mapReady]);
+  }, [
+    userLocation,
+    headingDeg,
+    followMode,
+    headingUp,
+    mapHeadingDeg,
+    mapReady,
+    arrowRotationOffset,
+  ]);
 
   useEffect(() => {
     if (!recenterRequestId || !mapReady || !mapInstanceRef.current || !userLocation) return;
     const map = mapInstanceRef.current;
-    map.setZoom(17);
-    applyNavCamera(map, userLocation, headingUp, mapHeadingDeg);
+    const counts = {
+      setCenter: setCenterCountRef.current,
+      panTo: panToCountRef.current,
+      moveCamera: moveCameraCountRef.current,
+    };
+    applyNavCamera(map, userLocation, headingUp, mapHeadingDeg, counts);
+    setCenterCountRef.current = counts.setCenter;
+    panToCountRef.current = counts.panTo;
+    moveCameraCountRef.current = counts.moveCamera;
   }, [recenterRequestId, mapReady, userLocation, headingUp, mapHeadingDeg]);
 
   useEffect(() => {
@@ -401,12 +541,14 @@ export default function GoogleMapViewer({
   }, [selectedPlaceId, places, followMode]);
 
   useEffect(() => {
-    if (!mapReady || !mapInstanceRef.current || followMode) return;
+    if (!mapReady || !mapInstanceRef.current) return;
     const map = mapInstanceRef.current as google.maps.Map & { setHeading?: (heading: number) => void };
-    try {
-      map.setHeading?.(0);
-    } catch {
-      // heading 미지원
+    if (!followMode) {
+      try {
+        map.setHeading?.(0);
+      } catch {
+        // heading 미지원
+      }
     }
   }, [followMode, mapReady]);
 
