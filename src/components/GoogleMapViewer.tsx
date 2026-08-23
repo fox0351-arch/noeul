@@ -2,35 +2,16 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
-import { destinationPoint } from '@/lib/geo';
 import { PlaceItem, PlaceLocation } from '@/types/place';
 
-const USER_SCREEN_FRACTION_FROM_BOTTOM = 0.35;
-
+const USER_MARKER_SCALE = 12;
+/** 현재 위치의 약 1.5배 */
+const RETURN_MARKER_SCALE = 18;
 const ROUTE_STROKE_COLOR = '#FF0000';
 const ROUTE_STROKE_WEIGHT = 6;
 const ROUTE_STROKE_OPACITY = 0.7;
 const RETURN_STROKE_COLOR = '#00FF66';
 const RETURN_STROKE_WEIGHT = 12;
-/** Google Maps CIRCLE scale is radius in px → 12 = 직경 24px */
-/** Google Maps CIRCLE scale is radius in px → 12 = 직경 24px */
-const USER_MARKER_SCALE = 12;
-/** 현장 표시 기준 16의 150% */
-const RETURN_MARKER_SCALE = 24;
-
-function offsetCenterForNav(
-  user: PlaceLocation,
-  map: google.maps.Map,
-  headingDeg: number
-): google.maps.LatLngLiteral {
-  const zoom = map.getZoom() ?? 17;
-  const height = map.getDiv().offsetHeight || 400;
-  const metersPerPixel =
-    (156543.03392 * Math.cos((user.latitude * Math.PI) / 180)) / 2 ** zoom;
-  const offsetM = (0.5 - USER_SCREEN_FRACTION_FROM_BOTTOM) * height * metersPerPixel;
-  const ahead = destinationPoint(user, headingDeg, Math.max(8, offsetM));
-  return { lat: ahead.latitude, lng: ahead.longitude };
-}
 
 function applyNavCamera(
   map: google.maps.Map,
@@ -38,32 +19,16 @@ function applyNavCamera(
   headingUp: boolean,
   mapHeadingDeg: number | null
 ) {
-  const travelHeading =
-    headingUp && mapHeadingDeg != null && Number.isFinite(mapHeadingDeg) ? mapHeadingDeg : 0;
-  const center = offsetCenterForNav(user, map, travelHeading);
-  const zoom = map.getZoom() ?? 17;
+  const pos = { lat: user.latitude, lng: user.longitude };
+  map.panTo(pos);
 
-  const camera = map as google.maps.Map & {
-    moveCamera?: (options: { center: google.maps.LatLngLiteral; heading?: number; zoom?: number }) => void;
-    setHeading?: (heading: number) => void;
-  };
-
+  const camera = map as google.maps.Map & { setHeading?: (heading: number) => void };
   try {
-    if (typeof camera.moveCamera === 'function') {
-      camera.moveCamera({
-        center,
-        heading: travelHeading,
-        zoom,
-      });
-      return;
+    if (headingUp && mapHeadingDeg != null && Number.isFinite(mapHeadingDeg)) {
+      camera.setHeading?.(mapHeadingDeg);
+    } else {
+      camera.setHeading?.(0);
     }
-  } catch {
-    // raster 지도는 heading 미지원일 수 있음
-  }
-
-  map.panTo(center);
-  try {
-    camera.setHeading?.(travelHeading);
   } catch {
     // heading 미지원
   }
@@ -257,10 +222,9 @@ export default function GoogleMapViewer({
       userMarkerRef.current.setMap(map);
     }
 
-    const arrowRotation =
-      (headingUp ? mapHeadingDeg ?? headingDeg : headingDeg) ?? 0;
+    const arrowRotation = headingDeg != null && Number.isFinite(headingDeg) ? headingDeg : 0;
 
-    if ((headingDeg != null && Number.isFinite(headingDeg)) || (headingUp && mapHeadingDeg != null)) {
+    if (headingDeg != null && Number.isFinite(headingDeg)) {
       if (!headingMarkerRef.current) {
         headingMarkerRef.current = new google.maps.Marker({
           position,
@@ -347,7 +311,7 @@ export default function GoogleMapViewer({
           fillColor: RETURN_STROKE_COLOR,
           fillOpacity: 1,
           strokeColor: '#003322',
-          strokeWeight: 4,
+          strokeWeight: 3,
         },
       });
     } else {
@@ -359,12 +323,12 @@ export default function GoogleMapViewer({
       returnHaloRef.current = new google.maps.Circle({
         center: returnPos,
         map,
-        radius: 14,
+        radius: 8,
         fillColor: RETURN_STROKE_COLOR,
-        fillOpacity: 0.35,
+        fillOpacity: 0.28,
         strokeColor: '#00FF66',
-        strokeOpacity: 1,
-        strokeWeight: 4,
+        strokeOpacity: 0.9,
+        strokeWeight: 3,
         zIndex: 39,
         clickable: false,
       });
@@ -377,22 +341,22 @@ export default function GoogleMapViewer({
       let tick = 0;
       returnPulseTimerRef.current = window.setInterval(() => {
         tick += 1;
-        const wave = (Math.sin(tick / 3) + 1) / 2;
-        const scale = RETURN_MARKER_SCALE + wave * 10;
+        const wave = (Math.sin(tick / 8) + 1) / 2;
+        const scale = RETURN_MARKER_SCALE - 1.5 + wave * 3;
         returnMarkerRef.current?.setIcon({
           path: google.maps.SymbolPath.CIRCLE,
           scale,
           fillColor: RETURN_STROKE_COLOR,
-          fillOpacity: 1,
+          fillOpacity: 0.85 + wave * 0.15,
           strokeColor: '#003322',
-          strokeWeight: 4,
+          strokeWeight: 3,
         });
         returnHaloRef.current?.setOptions({
-          radius: 10 + wave * 16,
-          fillOpacity: 0.22 + wave * 0.28,
-          strokeOpacity: 0.7 + wave * 0.3,
+          radius: 6 + wave * 5,
+          fillOpacity: 0.12 + wave * 0.18,
+          strokeOpacity: 0.45 + wave * 0.25,
         });
-      }, 90);
+      }, 180);
     }
 
     const lineOptions: google.maps.PolylineOptions = {

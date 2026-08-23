@@ -99,6 +99,9 @@ export const OFF_ROUTE_THRESHOLD_M = 20;
 export const FAR_OFF_ROUTE_THRESHOLD_M = 50;
 export const WRONG_WAY_OFF_ROUTE_THRESHOLD_M = 100;
 export const WEAK_GPS_ACCURACY_M = 30;
+export const MAX_ACCEPT_GPS_ACCURACY_M = 35;
+export const GPS_SMOOTH_COUNT = 5;
+export const MIN_HEADING_MOVE_M = 3;
 export const MIN_MAP_ROTATE_KMH = 1;
 export const STOP_MAP_ROTATE_KMH = 0.7;
 
@@ -132,6 +135,14 @@ export function destinationPoint(
   return {
     latitude: (lat2 * 180) / Math.PI,
     longitude: ((((lng2 * 180) / Math.PI + 540) % 360) - 180),
+  };
+}
+
+export function averageLocations(points: PlaceLocation[]): PlaceLocation {
+  const n = points.length;
+  return {
+    latitude: points.reduce((sum, p) => sum + p.latitude, 0) / n,
+    longitude: points.reduce((sum, p) => sum + p.longitude, 0) / n,
   };
 }
 

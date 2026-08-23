@@ -12,7 +12,7 @@ import { generateTravelBlogEssay, TravelBlogDraft } from '@/lib/travelBlogEssay'
 import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem, withPresetChecklistTexts } from '@/types/travelMap';
 import { TravelRoute, routePointsToLocations } from '@/types/route';
 import { parseTrailFile } from '@/lib/gpxKmlParser';
-import { OffRouteLevel, bearingDegrees, closestPointOnRoute, distanceToRouteMeters, offRouteLevelFromDistance, speedKmhFromCoords, MIN_MAP_ROTATE_KMH, STOP_MAP_ROTATE_KMH, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
+import { OffRouteLevel, averageLocations, bearingDegrees, closestPointOnRoute, distanceToRouteMeters, haversineMeters, offRouteLevelFromDistance, speedKmhFromCoords, GPS_SMOOTH_COUNT, MAX_ACCEPT_GPS_ACCURACY_M, MIN_HEADING_MOVE_M, MIN_MAP_ROTATE_KMH, STOP_MAP_ROTATE_KMH, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
 import {
   formatSosMessage,
   loadBatterySave,
@@ -130,6 +130,8 @@ export default function HomePage() {
   const lastFixAtRef = useRef(0);
   const mapHeadingRef = useRef<number | null>(null);
   const mapRotatingRef = useRef(false);
+  const gpsBufferRef = useRef<PlaceLocation[]>([]);
+  const lastGoodHeadingRef = useRef<number | null>(null);
   const { installed, hint: installHint, install: installApp } = usePwaInstall();
 
   const displayedPlaces = useMemo(() => {
@@ -296,8 +298,9 @@ export default function HomePage() {
     }
 
     let cancelled = false;
-    const intervalMs = batterySave ? 10000 : 2000;
+    const intervalMs = batterySave ? 10000 : 800;
     let lastAcceptedAt = 0;
+    gpsBufferRef.current = [];
     let watchId: number | null = null;
 
     const applyOffRoute = (distance: number) => {
@@ -338,48 +341,58 @@ export default function HomePage() {
     const updateFromPosition = (coords: GeolocationCoordinates) => {
       if (cancelled) return;
       const now = Date.now();
-      if (now - lastAcceptedAt < intervalMs - 200) return;
+      if (now - lastAcceptedAt < intervalMs - 150) return;
+
+      const accuracy = Number.isFinite(coords.accuracy) ? coords.accuracy : null;
+      setGpsAccuracyM(accuracy);
+      if (accuracy != null && accuracy > MAX_ACCEPT_GPS_ACCURACY_M) return;
+
       lastAcceptedAt = now;
 
-      const next: PlaceLocation = {
+      const raw: PlaceLocation = {
         latitude: coords.latitude,
         longitude: coords.longitude,
       };
+      gpsBufferRef.current = [...gpsBufferRef.current, raw].slice(-GPS_SMOOTH_COUNT);
+      const next = averageLocations(gpsBufferRef.current);
       const prevFix = lastFixRef.current;
       const elapsedMs = lastFixAtRef.current ? now - lastFixAtRef.current : 0;
       const speedKmh = speedKmhFromCoords(coords, prevFix, next, elapsedMs);
+      const movedM = prevFix ? haversineMeters(prevFix, next) : 0;
 
-      let heading: number | null =
-        coords.heading != null && Number.isFinite(coords.heading) ? coords.heading : null;
-      if (heading == null && prevFix) {
-        const moved = Math.hypot(
-          next.latitude - prevFix.latitude,
-          next.longitude - prevFix.longitude
-        );
-        if (moved > 0.00001) {
-          heading = bearingDegrees(prevFix, next);
-        }
+      let heading: number | null = lastGoodHeadingRef.current;
+      if (movedM >= MIN_HEADING_MOVE_M && prevFix) {
+        heading = bearingDegrees(prevFix, next);
+      } else if (
+        coords.heading != null &&
+        Number.isFinite(coords.heading) &&
+        speedKmh != null &&
+        speedKmh >= MIN_MAP_ROTATE_KMH
+      ) {
+        heading = coords.heading;
       }
 
       if (speedKmh != null) {
         if (speedKmh >= MIN_MAP_ROTATE_KMH) mapRotatingRef.current = true;
         if (speedKmh < STOP_MAP_ROTATE_KMH) mapRotatingRef.current = false;
       }
-      if (mapRotatingRef.current && heading != null && Number.isFinite(heading)) {
-        mapHeadingRef.current = heading;
+      if (heading != null && Number.isFinite(heading)) {
+        lastGoodHeadingRef.current = heading;
+        if (mapRotatingRef.current || movedM >= MIN_HEADING_MOVE_M) {
+          mapHeadingRef.current = heading;
+        }
       }
 
       lastFixRef.current = next;
       lastFixAtRef.current = now;
       setUserLocation(next);
-      setHeadingDeg(heading);
+      setHeadingDeg(lastGoodHeadingRef.current);
       setMapHeadingDeg(mapHeadingRef.current);
-      setGpsAccuracyM(Number.isFinite(coords.accuracy) ? coords.accuracy : null);
       saveLastGps({
         latitude: next.latitude,
         longitude: next.longitude,
-        accuracyM: Number.isFinite(coords.accuracy) ? coords.accuracy : null,
-        heading,
+        accuracyM: accuracy,
+        heading: lastGoodHeadingRef.current,
         savedAt: new Date().toISOString(),
       });
       setMapError('');
@@ -780,14 +793,17 @@ export default function HomePage() {
       setMapHeadingDeg(last.heading);
     }
     mapRotatingRef.current = false;
+    gpsBufferRef.current = [];
+    lastGoodHeadingRef.current = last?.heading ?? lastGoodHeadingRef.current;
     warmSpeechVoices();
     setIsFollowMode(true);
+    setRecenterRequestId((id) => id + 1);
     setIsPlaceListCollapsed(true);
     setIsFieldTestOpen(false);
-    const seconds = batterySave ? 10 : 2;
+    const seconds = batterySave ? 10 : 1;
     setMapNotice(
       navigator.onLine
-        ? `현재 위치를 ${seconds}초마다 갱신합니다. 루트는 이 기기에 저장되어 있습니다.`
+        ? `현재 위치를 약 ${seconds}초마다 갱신합니다. 지도가 내 위치를 따라갑니다.`
         : `인터넷이 없어도 GPS로 따라갈 수 있습니다. ${seconds}초마다 위치를 확인합니다.`
     );
   };
@@ -796,7 +812,7 @@ export default function HomePage() {
     setBatterySave((current) => {
       const next = !current;
       saveBatterySave(next);
-      setMapNotice(next ? '배터리 절약: 10초마다 GPS를 확인합니다.' : '일반 모드: 2초마다 GPS를 확인합니다.');
+      setMapNotice(next ? '배터리 절약: 10초마다 위치를 확인합니다.' : '일반 모드: 약 1초마다 위치를 확인합니다.');
       return next;
     });
   };
