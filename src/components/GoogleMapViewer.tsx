@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
+import { destinationPoint } from '@/lib/geo';
 import { PlaceItem, PlaceLocation } from '@/types/place';
+
+const USER_SCREEN_FRACTION_FROM_BOTTOM = 0.35;
 
 const ROUTE_STROKE_COLOR = '#FF0000';
 const ROUTE_STROKE_WEIGHT = 6;
@@ -10,7 +13,61 @@ const ROUTE_STROKE_OPACITY = 0.7;
 const RETURN_STROKE_COLOR = '#00FF66';
 const RETURN_STROKE_WEIGHT = 12;
 /** Google Maps CIRCLE scale is radius in px → 12 = 직경 24px */
+/** Google Maps CIRCLE scale is radius in px → 12 = 직경 24px */
 const USER_MARKER_SCALE = 12;
+/** 현장 표시 기준 16의 150% */
+const RETURN_MARKER_SCALE = 24;
+
+function offsetCenterForNav(
+  user: PlaceLocation,
+  map: google.maps.Map,
+  headingDeg: number
+): google.maps.LatLngLiteral {
+  const zoom = map.getZoom() ?? 17;
+  const height = map.getDiv().offsetHeight || 400;
+  const metersPerPixel =
+    (156543.03392 * Math.cos((user.latitude * Math.PI) / 180)) / 2 ** zoom;
+  const offsetM = (0.5 - USER_SCREEN_FRACTION_FROM_BOTTOM) * height * metersPerPixel;
+  const ahead = destinationPoint(user, headingDeg, Math.max(8, offsetM));
+  return { lat: ahead.latitude, lng: ahead.longitude };
+}
+
+function applyNavCamera(
+  map: google.maps.Map,
+  user: PlaceLocation,
+  headingUp: boolean,
+  mapHeadingDeg: number | null
+) {
+  const travelHeading =
+    headingUp && mapHeadingDeg != null && Number.isFinite(mapHeadingDeg) ? mapHeadingDeg : 0;
+  const center = offsetCenterForNav(user, map, travelHeading);
+  const zoom = map.getZoom() ?? 17;
+
+  const camera = map as google.maps.Map & {
+    moveCamera?: (options: { center: google.maps.LatLngLiteral; heading?: number; zoom?: number }) => void;
+    setHeading?: (heading: number) => void;
+  };
+
+  try {
+    if (typeof camera.moveCamera === 'function') {
+      camera.moveCamera({
+        center,
+        heading: travelHeading,
+        zoom,
+      });
+      return;
+    }
+  } catch {
+    // raster 지도는 heading 미지원일 수 있음
+  }
+
+  map.panTo(center);
+  try {
+    camera.setHeading?.(travelHeading);
+  } catch {
+    // heading 미지원
+  }
+}
 
 interface GoogleMapViewerProps {
   center: PlaceLocation;
@@ -21,9 +78,13 @@ interface GoogleMapViewerProps {
   userLocation?: PlaceLocation | null;
   headingDeg?: number | null;
   followMode?: boolean;
+  /** 진행 방향이 화면 위쪽 (카카오/티맵 길안내) */
+  headingUp?: boolean;
+  /** 저속에서는 고정된 지도 회전각 */
+  mapHeadingDeg?: number | null;
   /** 값이 바뀔 때마다 현재 위치로 이동하고 줌 17 */
   recenterRequestId?: number;
-  /** 30m 이탈 시 가장 가까운 루트 복귀 지점 */
+  /** 경로 이탈 시 가장 가까운 루트 복귀 지점 */
   returnPoint?: PlaceLocation | null;
 }
 
@@ -36,6 +97,8 @@ export default function GoogleMapViewer({
   userLocation = null,
   headingDeg = null,
   followMode = false,
+  headingUp = false,
+  mapHeadingDeg = null,
   recenterRequestId = 0,
   returnPoint = null,
 }: GoogleMapViewerProps) {
@@ -47,6 +110,8 @@ export default function GoogleMapViewer({
   const headingMarkerRef = useRef<google.maps.Marker | null>(null);
   const returnMarkerRef = useRef<google.maps.Marker | null>(null);
   const returnLineRef = useRef<google.maps.Polyline | null>(null);
+  const returnHaloRef = useRef<google.maps.Circle | null>(null);
+  const returnPulseTimerRef = useRef<number | null>(null);
   const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
@@ -60,13 +125,22 @@ export default function GoogleMapViewer({
         await importLibrary('maps');
         if (!mapRef.current) return;
 
-        const map = new google.maps.Map(mapRef.current, {
+        const mapOptions: google.maps.MapOptions = {
           center: { lat: center.latitude, lng: center.longitude },
           zoom: 13,
+          heading: 0,
+          tilt: 0,
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: true,
-        });
+          rotateControl: false,
+        };
+        const renderingType = google.maps.RenderingType?.VECTOR;
+        if (renderingType) {
+          mapOptions.renderingType = renderingType;
+        }
+
+        const map = new google.maps.Map(mapRef.current, mapOptions);
 
         mapInstanceRef.current = map;
         setMapReady(true);
@@ -183,7 +257,10 @@ export default function GoogleMapViewer({
       userMarkerRef.current.setMap(map);
     }
 
-    if (headingDeg != null && Number.isFinite(headingDeg)) {
+    const arrowRotation =
+      (headingUp ? mapHeadingDeg ?? headingDeg : headingDeg) ?? 0;
+
+    if ((headingDeg != null && Number.isFinite(headingDeg)) || (headingUp && mapHeadingDeg != null)) {
       if (!headingMarkerRef.current) {
         headingMarkerRef.current = new google.maps.Marker({
           position,
@@ -197,7 +274,7 @@ export default function GoogleMapViewer({
             fillOpacity: 1,
             strokeColor: '#ffffff',
             strokeWeight: 2,
-            rotation: headingDeg,
+            rotation: arrowRotation,
             anchor: new google.maps.Point(0, 2.4),
           },
         });
@@ -210,7 +287,7 @@ export default function GoogleMapViewer({
           fillOpacity: 1,
           strokeColor: '#ffffff',
           strokeWeight: 2,
-          rotation: headingDeg,
+          rotation: arrowRotation,
           anchor: new google.maps.Point(0, 2.4),
         });
         headingMarkerRef.current.setMap(map);
@@ -218,24 +295,34 @@ export default function GoogleMapViewer({
     }
 
     if (followMode) {
-      map.panTo(position);
+      applyNavCamera(map, userLocation, headingUp, mapHeadingDeg);
     }
-  }, [userLocation, headingDeg, followMode, mapReady]);
+  }, [userLocation, headingDeg, followMode, headingUp, mapHeadingDeg, mapReady]);
 
   useEffect(() => {
     if (!recenterRequestId || !mapReady || !mapInstanceRef.current || !userLocation) return;
     const map = mapInstanceRef.current;
-    map.panTo({ lat: userLocation.latitude, lng: userLocation.longitude });
     map.setZoom(17);
-  }, [recenterRequestId, mapReady, userLocation]);
+    applyNavCamera(map, userLocation, headingUp, mapHeadingDeg);
+  }, [recenterRequestId, mapReady, userLocation, headingUp, mapHeadingDeg]);
 
   useEffect(() => {
     if (!mapReady || !mapInstanceRef.current || !window.google) return;
     const map = mapInstanceRef.current;
 
+    const stopPulse = () => {
+      if (returnPulseTimerRef.current != null) {
+        window.clearInterval(returnPulseTimerRef.current);
+        returnPulseTimerRef.current = null;
+      }
+    };
+
     const clearReturn = () => {
+      stopPulse();
       returnMarkerRef.current?.setMap(null);
       returnMarkerRef.current = null;
+      returnHaloRef.current?.setMap(null);
+      returnHaloRef.current = null;
       returnLineRef.current?.setMap(null);
       returnLineRef.current = null;
     };
@@ -256,16 +343,56 @@ export default function GoogleMapViewer({
         zIndex: 41,
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
-          scale: 11,
+          scale: RETURN_MARKER_SCALE,
           fillColor: RETURN_STROKE_COLOR,
           fillOpacity: 1,
           strokeColor: '#003322',
-          strokeWeight: 2,
+          strokeWeight: 4,
         },
       });
     } else {
       returnMarkerRef.current.setPosition(returnPos);
       returnMarkerRef.current.setMap(map);
+    }
+
+    if (!returnHaloRef.current) {
+      returnHaloRef.current = new google.maps.Circle({
+        center: returnPos,
+        map,
+        radius: 14,
+        fillColor: RETURN_STROKE_COLOR,
+        fillOpacity: 0.35,
+        strokeColor: '#00FF66',
+        strokeOpacity: 1,
+        strokeWeight: 4,
+        zIndex: 39,
+        clickable: false,
+      });
+    } else {
+      returnHaloRef.current.setCenter(returnPos);
+      returnHaloRef.current.setMap(map);
+    }
+
+    if (returnPulseTimerRef.current == null) {
+      let tick = 0;
+      returnPulseTimerRef.current = window.setInterval(() => {
+        tick += 1;
+        const wave = (Math.sin(tick / 3) + 1) / 2;
+        const scale = RETURN_MARKER_SCALE + wave * 10;
+        returnMarkerRef.current?.setIcon({
+          path: google.maps.SymbolPath.CIRCLE,
+          scale,
+          fillColor: RETURN_STROKE_COLOR,
+          fillOpacity: 1,
+          strokeColor: '#003322',
+          strokeWeight: 4,
+        });
+        returnHaloRef.current?.setOptions({
+          radius: 10 + wave * 16,
+          fillOpacity: 0.22 + wave * 0.28,
+          strokeOpacity: 0.7 + wave * 0.3,
+        });
+      }, 90);
     }
 
     const lineOptions: google.maps.PolylineOptions = {
@@ -308,6 +435,25 @@ export default function GoogleMapViewer({
       mapInstanceRef.current.setZoom(15);
     }
   }, [selectedPlaceId, places, followMode]);
+
+  useEffect(() => {
+    if (!mapReady || !mapInstanceRef.current || followMode) return;
+    const map = mapInstanceRef.current as google.maps.Map & { setHeading?: (heading: number) => void };
+    try {
+      map.setHeading?.(0);
+    } catch {
+      // heading 미지원
+    }
+  }, [followMode, mapReady]);
+
+  useEffect(() => {
+    return () => {
+      if (returnPulseTimerRef.current != null) {
+        window.clearInterval(returnPulseTimerRef.current);
+        returnPulseTimerRef.current = null;
+      }
+    };
+  }, []);
 
   return <div ref={mapRef} className="w-full h-full min-h-[400px]" />;
 }

@@ -1,4 +1,5 @@
 import { PlaceLocation } from '@/types/place';
+import { VoiceStyle } from '@/lib/userData';
 
 const BATTERY_SAVE_KEY = 'noeul.batterySave.v1';
 
@@ -20,15 +21,70 @@ export function saveBatterySave(enabled: boolean): void {
   }
 }
 
+export const OFF_ROUTE_VOICE: Record<20 | 50 | 100, string> = {
+  20: '할아버지. 길을 조금 벗어나셨어요. 초록색 지점으로 돌아오세요.',
+  50: '할아버지. 길을 많이 벗어나셨어요. 초록색 지점으로 돌아오세요.',
+  100: '아니에요. 반대 방향이에요. 초록색 지점으로 돌아오세요.',
+};
+
+export const RETURN_TO_ROUTE_VOICE = '와. 잘 찾으셨어요. 다시 길을 따라가시면 돼요.';
+
+export function offRouteToastText(meters: number): string {
+  return `⚠ 경로 이탈 ${meters}m\n📍 초록색 지점으로\n돌아오세요`;
+}
+
+const VOICE_TONE: Record<
+  Exclude<VoiceStyle, 'mute'>,
+  { pitch: number; rate: number; prefer: RegExp }
+> = {
+  grandchild: { pitch: 1.5, rate: 1.0, prefer: /nari|sunhi|heami|yuna|sora|google|여성|female|woman|girl|child/i },
+  female: { pitch: 1.1, rate: 1.0, prefer: /nari|sunhi|heami|yuna|sora|google|여성|female|woman/i },
+  male: { pitch: 0.9, rate: 0.95, prefer: /injoon|hyunsu|jinho|남성|male|man|david|minho/i },
+};
+
+let activeVoiceStyle: VoiceStyle = 'grandchild';
+
+export function setActiveVoiceStyle(style: VoiceStyle): void {
+  activeVoiceStyle = style;
+}
+
+function pickVoiceForStyle(style: Exclude<VoiceStyle, 'mute'>): SpeechSynthesisVoice | null {
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length === 0) return null;
+  const korean = voices.filter(
+    (voice) => /^ko\b/i.test(voice.lang) || /한국|korean/i.test(`${voice.name} ${voice.lang}`)
+  );
+  const pool = korean.length > 0 ? korean : voices;
+  const preferred = pool.find((voice) => VOICE_TONE[style].prefer.test(`${voice.name} ${voice.voiceURI}`));
+  if (preferred) return preferred;
+  if (style === 'male') {
+    const notFemale = pool.find((voice) => !/female|woman|여성|nari|sunhi|heami/i.test(voice.name));
+    return notFemale ?? pool[0] ?? null;
+  }
+  return pool[0] ?? null;
+}
+
+export function warmSpeechVoices(): void {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  window.speechSynthesis.getVoices();
+  window.speechSynthesis.addEventListener('voiceschanged', () => {
+    window.speechSynthesis.getVoices();
+  });
+}
+
 export function speakKorean(text: string): void {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  if (activeVoiceStyle === 'mute') return;
   try {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'ko-KR';
-    utterance.rate = 0.88;
-    utterance.pitch = 1;
+    const tone = VOICE_TONE[activeVoiceStyle];
+    utterance.rate = tone.rate;
+    utterance.pitch = tone.pitch;
     utterance.volume = 1;
+    const voice = pickVoiceForStyle(activeVoiceStyle);
+    if (voice) utterance.voice = voice;
     window.speechSynthesis.speak(utterance);
   } catch {
     // 음성 미지원 기기는 무시
@@ -47,7 +103,7 @@ export function stopRepeatingSpeech(): void {
   }
 }
 
-export function startRepeatingSpeech(text: string, intervalMs = 7000): void {
+export function startRepeatingSpeech(text: string, intervalMs = 5000): void {
   stopRepeatingSpeech();
   speakKorean(text);
   repeatingTimer = window.setInterval(() => {
@@ -73,9 +129,15 @@ export function vibrateTimes(count: 1 | 2 | 3): void {
   }
 }
 
-export function vibrateAlert(level: 20 | 30): void {
+export function vibrateAlert(level: 20 | 50 | 100): void {
   try {
-    navigator.vibrate?.(level === 30 ? [400, 120, 400, 120, 400] : [240, 120, 240]);
+    const pattern =
+      level === 100
+        ? [400, 100, 400, 100, 400]
+        : level === 50
+          ? [320, 120, 320, 120, 320]
+          : [240, 120, 240];
+    navigator.vibrate?.(pattern);
   } catch {
     // 진동 미지원
   }
@@ -93,6 +155,7 @@ function getAudioContext(): AudioContext | null {
 }
 
 export function unlockAlertAudio(): void {
+  warmSpeechVoices();
   const ctx = getAudioContext();
   if (!ctx) return;
   if (ctx.state === 'suspended') {

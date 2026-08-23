@@ -12,29 +12,34 @@ import { generateTravelBlogEssay, TravelBlogDraft } from '@/lib/travelBlogEssay'
 import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem, withPresetChecklistTexts } from '@/types/travelMap';
 import { TravelRoute, routePointsToLocations } from '@/types/route';
 import { parseTrailFile } from '@/lib/gpxKmlParser';
-import { bearingDegrees, closestPointOnRoute, distanceToRouteMeters, offRouteLevelFromDistance, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
+import { OffRouteLevel, bearingDegrees, closestPointOnRoute, distanceToRouteMeters, offRouteLevelFromDistance, speedKmhFromCoords, MIN_MAP_ROTATE_KMH, STOP_MAP_ROTATE_KMH, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
 import {
   formatSosMessage,
   loadBatterySave,
   openKakaoShare,
   openPhoneCall,
   openSmsShare,
-  playAlertBeep,
+  OFF_ROUTE_VOICE,
+  RETURN_TO_ROUTE_VOICE,
+  offRouteToastText,
   saveBatterySave,
   shareOrCopy,
+  setActiveVoiceStyle,
   speakKorean,
   startRepeatingSpeech,
   stopRepeatingSpeech,
   unlockAlertAudio,
   vibrateAlert,
-  vibrateTimes,
   vibrateOnce,
+  vibrateTimes,
+  warmSpeechVoices,
 } from '@/lib/navSafety';
 import { batteryBand, subscribeBattery, type BatteryLevelBand } from '@/lib/batteryStatus';
 import { loadLastGps, saveLastGps, lastGpsToLocation } from '@/lib/lastGps';
 import { loadGuardianPhone, saveGuardianPhone } from '@/lib/guardianStorage';
 import { FIELD_TEST_ITEMS, loadFieldTestChecks, saveFieldTestChecks } from '@/lib/fieldTestChecklist';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
+import { loadUserSettings, saveUserSettings, type VoiceStyle } from '@/lib/userData';
 import GoogleMapViewer from '@/components/GoogleMapViewer';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
 
@@ -93,10 +98,13 @@ export default function HomePage() {
   const [userLocation, setUserLocation] = useState<PlaceLocation | null>(null);
   const [headingDeg, setHeadingDeg] = useState<number | null>(null);
   const [gpsAccuracyM, setGpsAccuracyM] = useState<number | null>(null);
-  const [offRouteLevel, setOffRouteLevel] = useState<0 | 20 | 30>(0);
+  const [offRouteLevel, setOffRouteLevel] = useState<OffRouteLevel>(0);
   const [isOnline, setIsOnline] = useState(true);
   const [batterySave, setBatterySave] = useState(false);
   const [highContrast, setHighContrast] = useState(false);
+  const [headingUpMode, setHeadingUpMode] = useState(true);
+  const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>('grandchild');
+  const [mapHeadingDeg, setMapHeadingDeg] = useState<number | null>(null);
   const [sosStep, setSosStep] = useState<0 | 1 | 2>(0);
   const [isSosShareOpen, setIsSosShareOpen] = useState(false);
   const [sosNotice, setSosNotice] = useState('');
@@ -115,9 +123,12 @@ export default function HomePage() {
   const [batteryCharging, setBatteryCharging] = useState(false);
   const [batterySupported, setBatterySupported] = useState(false);
   const [batteryAlertBand, setBatteryAlertBand] = useState<BatteryLevelBand>('ok');
-  const offRouteLevelRef = useRef<0 | 20 | 30>(0);
+  const offRouteLevelRef = useRef<OffRouteLevel>(0);
   const lastBatteryBandRef = useRef<BatteryLevelBand>('ok');
   const lastFixRef = useRef<PlaceLocation | null>(null);
+  const lastFixAtRef = useRef(0);
+  const mapHeadingRef = useRef<number | null>(null);
+  const mapRotatingRef = useRef(false);
   const { installed, hint: installHint, install: installApp } = usePwaInstall();
 
   const displayedPlaces = useMemo(() => {
@@ -161,6 +172,10 @@ export default function HomePage() {
     setBatterySave(loadBatterySave());
     setGuardianPhone(loadGuardianPhone());
     setFieldChecks(loadFieldTestChecks());
+    const prefs = loadUserSettings();
+    setVoiceStyle(prefs.voiceStyle);
+    setHeadingUpMode(prefs.headingUp);
+    setActiveVoiceStyle(prefs.voiceStyle);
     const contrastOn = window.localStorage.getItem('noeul.highContrast.v1') === '1';
     setHighContrast(contrastOn);
     document.documentElement.classList.toggle('high-contrast', contrastOn);
@@ -292,12 +307,12 @@ export default function HomePage() {
       offRouteLevelRef.current = nextLevel;
       setOffRouteLevel(nextLevel);
 
-      if (nextLevel !== 30 && prevLevel === 30) {
+      if (nextLevel !== 100 && prevLevel === 100) {
         stopRepeatingSpeech();
       }
 
       if (nextLevel === 0 && prevLevel > 0) {
-        speakKorean('원래 경로로 복귀했습니다.');
+        speakKorean(RETURN_TO_ROUTE_VOICE);
         vibrateOnce();
         setOffRouteToast('');
         if (offRouteToastTimerRef.current) window.clearTimeout(offRouteToastTimerRef.current);
@@ -305,25 +320,17 @@ export default function HomePage() {
         window.setTimeout(() => setReturnToast(''), 2000);
         return;
       }
-      if (nextLevel >= 20 && prevLevel < nextLevel) {
+      if ((nextLevel === 20 || nextLevel === 50 || nextLevel === 100) && prevLevel < nextLevel) {
         const meters = Math.max(1, Math.round(distance));
-        const text =
-          nextLevel === 30
-            ? `⚠ 경로 이탈 ${meters}m\n초록선을 따라 복귀하세요`
-            : `⚠ 경로 이탈 ${meters}m`;
-        setOffRouteToast(text);
+        setOffRouteToast(offRouteToastText(meters));
         if (offRouteToastTimerRef.current) window.clearTimeout(offRouteToastTimerRef.current);
         offRouteToastTimerRef.current = window.setTimeout(() => setOffRouteToast(''), 3000);
-      }
-      if (nextLevel === 20 && prevLevel === 0) {
-        vibrateAlert(20);
-        playAlertBeep(20);
-        return;
-      }
-      if (nextLevel === 30) {
-        vibrateAlert(30);
-        playAlertBeep(30);
-        startRepeatingSpeech('경로를 벗어났습니다. 초록선을 따라 복귀하세요.');
+        vibrateAlert(nextLevel);
+        if (nextLevel === 100) {
+          startRepeatingSpeech(OFF_ROUTE_VOICE[100], 5000);
+        } else {
+          speakKorean(OFF_ROUTE_VOICE[nextLevel]);
+        }
       }
     };
 
@@ -337,20 +344,35 @@ export default function HomePage() {
         latitude: coords.latitude,
         longitude: coords.longitude,
       };
+      const prevFix = lastFixRef.current;
+      const elapsedMs = lastFixAtRef.current ? now - lastFixAtRef.current : 0;
+      const speedKmh = speedKmhFromCoords(coords, prevFix, next, elapsedMs);
+
       let heading: number | null =
         coords.heading != null && Number.isFinite(coords.heading) ? coords.heading : null;
-      if (heading == null && lastFixRef.current) {
+      if (heading == null && prevFix) {
         const moved = Math.hypot(
-          next.latitude - lastFixRef.current.latitude,
-          next.longitude - lastFixRef.current.longitude
+          next.latitude - prevFix.latitude,
+          next.longitude - prevFix.longitude
         );
         if (moved > 0.00001) {
-          heading = bearingDegrees(lastFixRef.current, next);
+          heading = bearingDegrees(prevFix, next);
         }
       }
+
+      if (speedKmh != null) {
+        if (speedKmh >= MIN_MAP_ROTATE_KMH) mapRotatingRef.current = true;
+        if (speedKmh < STOP_MAP_ROTATE_KMH) mapRotatingRef.current = false;
+      }
+      if (mapRotatingRef.current && heading != null && Number.isFinite(heading)) {
+        mapHeadingRef.current = heading;
+      }
+
       lastFixRef.current = next;
+      lastFixAtRef.current = now;
       setUserLocation(next);
       setHeadingDeg(heading);
+      setMapHeadingDeg(mapHeadingRef.current);
       setGpsAccuracyM(Number.isFinite(coords.accuracy) ? coords.accuracy : null);
       saveLastGps({
         latitude: next.latitude,
@@ -364,7 +386,7 @@ export default function HomePage() {
       if (!currentRoute || currentRoute.points.length < 2) return;
       const routeLocations = routePointsToLocations(currentRoute.points);
       const distance = distanceToRouteMeters(next, routeLocations);
-      if (distance >= 30) {
+      if (distance >= 20) {
         setReturnPoint(closestPointOnRoute(next, routeLocations));
       } else {
         setReturnPoint(null);
@@ -749,10 +771,15 @@ export default function HomePage() {
     if (last) {
       const loc = { latitude: last.latitude, longitude: last.longitude };
       lastFixRef.current = loc;
+      lastFixAtRef.current = Date.now();
       setUserLocation(loc);
       setGpsAccuracyM(last.accuracyM);
       setHeadingDeg(last.heading);
+      mapHeadingRef.current = last.heading;
+      setMapHeadingDeg(last.heading);
     }
+    mapRotatingRef.current = false;
+    warmSpeechVoices();
     setIsFollowMode(true);
     setIsPlaceListCollapsed(true);
     setIsFieldTestOpen(false);
@@ -1599,6 +1626,39 @@ export default function HomePage() {
             >
               {highContrast ? '고대비 켜짐' : '고대비 모드'}
             </button>
+            <label className="block mb-1 text-base font-bold text-slate-800">음성 안내 스타일</label>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              {(
+                [
+                  ['grandchild', '👧 손녀 목소리'],
+                  ['female', '👩 여성 목소리'],
+                  ['male', '👨 남성 목소리'],
+                  ['mute', '🔇 무음'],
+                ] as const
+              ).map(([style, label]) => (
+                <button
+                  key={style}
+                  type="button"
+                  aria-pressed={voiceStyle === style}
+                  onClick={() => {
+                    setVoiceStyle(style);
+                    setActiveVoiceStyle(style);
+                    saveUserSettings({ voiceStyle: style });
+                    if (style !== 'mute') {
+                      warmSpeechVoices();
+                      speakKorean('이 목소리로 안내할게요.');
+                    }
+                  }}
+                  className={`px-2 text-base font-black rounded-lg min-h-12 border-2 ${
+                    voiceStyle === style
+                      ? 'text-white bg-blue-800 border-blue-800'
+                      : 'text-slate-900 bg-white border-slate-400'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <label className="block mb-1 text-base font-bold text-slate-800">보호자 전화번호</label>
             <div className="flex gap-2 mb-3">
               <input
@@ -1723,9 +1783,45 @@ export default function HomePage() {
             userLocation={userLocation}
             headingDeg={headingDeg}
             followMode={isFollowMode}
+            headingUp={isFollowMode && headingUpMode}
+            mapHeadingDeg={mapHeadingDeg}
             recenterRequestId={recenterRequestId}
-            returnPoint={offRouteLevel === 30 ? returnPoint : null}
+            returnPoint={offRouteLevel >= 20 ? returnPoint : null}
           />
+          {isFollowMode && (
+            <div className="absolute z-20 flex gap-2 top-2 left-2 right-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setHeadingUpMode(false);
+                  saveUserSettings({ headingUp: false });
+                }}
+                aria-pressed={!headingUpMode}
+                className={`flex-1 px-2 text-base font-black rounded-lg min-h-12 border-2 ${
+                  !headingUpMode
+                    ? 'text-white bg-slate-900 border-slate-900'
+                    : 'text-slate-900 bg-white/95 border-slate-400'
+                }`}
+              >
+                🧭 북쪽고정
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setHeadingUpMode(true);
+                  saveUserSettings({ headingUp: true });
+                }}
+                aria-pressed={headingUpMode}
+                className={`flex-1 px-2 text-base font-black rounded-lg min-h-12 border-2 ${
+                  headingUpMode
+                    ? 'text-white bg-blue-800 border-blue-800'
+                    : 'text-slate-900 bg-white/95 border-slate-400'
+                }`}
+              >
+                🚶 따라가기
+              </button>
+            </div>
+          )}
           {!isOnline && isFollowMode && (
             <p className="absolute z-10 px-3 py-2 text-sm font-bold text-white rounded-lg shadow bottom-3 left-3 right-24 bg-slate-800/90">
               지도 사진은 인터넷이 필요합니다. GPS 추적은 계속됩니다.

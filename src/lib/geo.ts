@@ -96,13 +96,54 @@ export function bearingDegrees(from: PlaceLocation, to: PlaceLocation): number {
 }
 
 export const OFF_ROUTE_THRESHOLD_M = 20;
-export const SEVERE_OFF_ROUTE_THRESHOLD_M = 30;
+export const FAR_OFF_ROUTE_THRESHOLD_M = 50;
+export const WRONG_WAY_OFF_ROUTE_THRESHOLD_M = 100;
 export const WEAK_GPS_ACCURACY_M = 30;
+export const MIN_MAP_ROTATE_KMH = 1;
+export const STOP_MAP_ROTATE_KMH = 0.7;
 
-export type OffRouteLevel = 0 | 20 | 30;
+export type OffRouteLevel = 0 | 20 | 50 | 100;
 
 export function offRouteLevelFromDistance(distanceMeters: number): OffRouteLevel {
-  if (distanceMeters >= SEVERE_OFF_ROUTE_THRESHOLD_M) return 30;
+  if (distanceMeters >= WRONG_WAY_OFF_ROUTE_THRESHOLD_M) return 100;
+  if (distanceMeters >= FAR_OFF_ROUTE_THRESHOLD_M) return 50;
   if (distanceMeters >= OFF_ROUTE_THRESHOLD_M) return 20;
   return 0;
+}
+
+export function destinationPoint(
+  from: PlaceLocation,
+  bearingDeg: number,
+  distanceM: number
+): PlaceLocation {
+  const angular = distanceM / EARTH_RADIUS_M;
+  const bearing = toRad(bearingDeg);
+  const lat1 = toRad(from.latitude);
+  const lng1 = toRad(from.longitude);
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(angular) + Math.cos(lat1) * Math.sin(angular) * Math.cos(bearing)
+  );
+  const lng2 =
+    lng1 +
+    Math.atan2(
+      Math.sin(bearing) * Math.sin(angular) * Math.cos(lat1),
+      Math.cos(angular) - Math.sin(lat1) * Math.sin(lat2)
+    );
+  return {
+    latitude: (lat2 * 180) / Math.PI,
+    longitude: ((((lng2 * 180) / Math.PI + 540) % 360) - 180),
+  };
+}
+
+export function speedKmhFromCoords(
+  coords: { speed: number | null },
+  from: PlaceLocation | null,
+  to: PlaceLocation,
+  elapsedMs: number
+): number | null {
+  if (coords.speed != null && Number.isFinite(coords.speed) && coords.speed >= 0) {
+    return coords.speed * 3.6;
+  }
+  if (!from || elapsedMs < 400) return null;
+  return (haversineMeters(from, to) / (elapsedMs / 1000)) * 3.6;
 }
