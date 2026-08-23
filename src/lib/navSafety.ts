@@ -29,17 +29,58 @@ export const OFF_ROUTE_VOICE: Record<20 | 50 | 100, string> = {
 
 export const RETURN_TO_ROUTE_VOICE = '와. 잘 찾으셨어요. 다시 길을 따라가시면 돼요.';
 
+export const VOICE_PREVIEW: Record<Exclude<VoiceStyle, 'mute'>, string> = {
+  grandchild: '할아버지, 손녀 목소리로 안내할게요.',
+  female: '여성 목소리로 안내하겠습니다.',
+  male: '남성 목소리로 안내하겠습니다.',
+};
+
 export function offRouteToastText(meters: number): string {
   return `⚠ 경로 이탈 ${meters}m\n📍 초록색 지점으로\n돌아오세요`;
+}
+
+/** 현장 참고음(소녀 314Hz / 여성 230Hz)에 맞춘 녹음 클립 */
+function clipForText(style: Exclude<VoiceStyle, 'mute'>, text: string): string | null {
+  const folder = `/voice/${style}`;
+  if (text === OFF_ROUTE_VOICE[20]) return `${folder}/20.mp3`;
+  if (text === OFF_ROUTE_VOICE[50]) return `${folder}/50.mp3`;
+  if (text === OFF_ROUTE_VOICE[100]) return `${folder}/100.mp3`;
+  if (text === RETURN_TO_ROUTE_VOICE) return `${folder}/return.mp3`;
+  if (text === VOICE_PREVIEW[style]) return `${folder}/preview.mp3`;
+  return null;
+}
+
+let currentVoiceAudio: HTMLAudioElement | null = null;
+
+function stopVoiceAudio(): void {
+  if (!currentVoiceAudio) return;
+  currentVoiceAudio.pause();
+  currentVoiceAudio.src = '';
+  currentVoiceAudio = null;
+}
+
+function playVoiceClip(url: string): boolean {
+  if (typeof Audio === 'undefined') return false;
+  stopVoiceAudio();
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+  }
+  const audio = new Audio(url);
+  audio.preload = 'auto';
+  currentVoiceAudio = audio;
+  void audio.play().catch(() => {
+    if (currentVoiceAudio === audio) currentVoiceAudio = null;
+  });
+  return true;
 }
 
 const VOICE_TONE: Record<
   Exclude<VoiceStyle, 'mute'>,
   { pitch: number; rate: number }
 > = {
-  grandchild: { pitch: 2, rate: 1.18 },
-  female: { pitch: 1, rate: 0.88 },
-  male: { pitch: 0.72, rate: 0.9 },
+  grandchild: { pitch: 1.52, rate: 1.05 },
+  female: { pitch: 1, rate: 0.96 },
+  male: { pitch: 0.78, rate: 0.92 },
 };
 
 let activeVoiceStyle: VoiceStyle = 'grandchild';
@@ -92,8 +133,11 @@ export function warmSpeechVoices(): void {
 }
 
 export function speakKorean(text: string): void {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  if (typeof window === 'undefined') return;
   if (activeVoiceStyle === 'mute') return;
+  const clip = clipForText(activeVoiceStyle, text);
+  if (clip && playVoiceClip(clip)) return;
+  if (!('speechSynthesis' in window)) return;
   try {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
@@ -117,6 +161,7 @@ export function stopRepeatingSpeech(): void {
     window.clearInterval(repeatingTimer);
     repeatingTimer = null;
   }
+  stopVoiceAudio();
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
@@ -228,7 +273,7 @@ export function formatSosMessage(location: PlaceLocation | null, accuracyM?: num
 
   const mapsUrl = `https://maps.google.com/?q=${location.latitude},${location.longitude}`;
   const accuracy = accuracyM != null && Number.isFinite(accuracyM)
-    ? `\nGPS 정확도: ±${Math.round(accuracyM)}m`
+    ? `\n위치 정확도: ±${Math.round(accuracyM)}m`
     : '';
 
   return {

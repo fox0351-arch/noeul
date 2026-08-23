@@ -21,6 +21,7 @@ import {
   openSmsShare,
   OFF_ROUTE_VOICE,
   RETURN_TO_ROUTE_VOICE,
+  VOICE_PREVIEW,
   offRouteToastText,
   saveBatterySave,
   shareOrCopy,
@@ -1051,7 +1052,7 @@ export default function HomePage() {
     URL.revokeObjectURL(url);
 
     setMapError('');
-    setMapNotice('여행지도를 백업 파일로 저장했습니다.');
+    setMapNotice('여행지도를 보관 파일로 저장했습니다.');
   };
 
   const handleRestoreTravelMapsClick = () => {
@@ -1075,7 +1076,7 @@ export default function HomePage() {
 
         if (!restored) {
           setMapNotice('');
-          setMapError('올바른 백업 파일이 아닙니다.');
+          setMapError('올바른 보관 파일이 아닙니다.');
           return;
         }
 
@@ -1103,16 +1104,16 @@ export default function HomePage() {
           setCurrentRoute(restored.find((map) => map.id === keepLoadedId)?.route ?? null);
         }
         setMapError('');
-        setMapNotice(`여행지도 ${restored.length}개를 복원했습니다.`);
-        window.alert('여행지도를 복원했습니다.');
+        setMapNotice(`여행지도 ${restored.length}개를 가져왔습니다.`);
+        window.alert('여행지도를 가져왔습니다.');
       } catch {
         setMapNotice('');
-        setMapError('올바른 백업 파일이 아닙니다.');
+        setMapError('올바른 보관 파일이 아닙니다.');
       }
     };
     reader.onerror = () => {
       setMapNotice('');
-      setMapError('올바른 백업 파일이 아닙니다.');
+      setMapError('올바른 보관 파일이 아닙니다.');
     };
     reader.readAsText(file);
   };
@@ -1267,8 +1268,11 @@ export default function HomePage() {
             </div>
           )}
           {isFollowMode && gpsAccuracyM != null && (
-            <div className="flex items-center px-2 text-sm font-black rounded-md min-h-10 text-slate-900 bg-slate-100">
-              📍±{Math.round(gpsAccuracyM)}m
+            <div
+              className="flex items-center px-2 text-sm font-black rounded-md min-h-10 text-slate-900 bg-slate-100"
+              title="위치 정확도"
+            >
+              위치 ±{Math.round(gpsAccuracyM)}m
             </div>
           )}
           {!installed && (
@@ -1624,15 +1628,15 @@ export default function HomePage() {
               aria-pressed={highContrast}
               className="w-full mb-2 px-3 text-base font-bold text-white rounded-lg min-h-12 bg-black"
             >
-              {highContrast ? '고대비 켜짐' : '고대비 모드'}
+              {highContrast ? '흑백 켜짐' : '흑백 모드'}
             </button>
             <label className="block mb-1 text-base font-bold text-slate-800">음성 안내 스타일</label>
             <div className="grid grid-cols-2 gap-2 mb-3">
               {(
                 [
-                  ['grandchild', '👧 손녀 목소리'],
-                  ['female', '👩 여성 목소리'],
-                  ['male', '👨 남성 목소리'],
+                  ['grandchild', '👧 손녀'],
+                  ['female', '👩 여성'],
+                  ['male', '👨 남성'],
                   ['mute', '🔇 무음'],
                 ] as const
               ).map(([style, label]) => (
@@ -1646,13 +1650,7 @@ export default function HomePage() {
                     saveUserSettings({ voiceStyle: style });
                     if (style !== 'mute') {
                       warmSpeechVoices();
-                      const preview =
-                        style === 'grandchild'
-                          ? '할아버지, 손녀 목소리로 안내할게요.'
-                          : style === 'female'
-                            ? '여성 목소리로 안내하겠습니다.'
-                            : '남성 목소리로 안내하겠습니다.';
-                      speakKorean(preview);
+                      speakKorean(VOICE_PREVIEW[style]);
                     }
                   }}
                   className={`px-2 text-base font-black rounded-lg min-h-12 border-2 ${
@@ -1715,14 +1713,14 @@ export default function HomePage() {
                 onClick={handleBackupTravelMaps}
                 className="flex-1 px-3 text-sm font-semibold text-amber-900 bg-amber-100 border border-amber-300 rounded-lg min-h-12 hover:bg-amber-200"
               >
-                여행지도 백업
+                여행지도 보관하기
               </button>
               <button
                 type="button"
                 onClick={handleRestoreTravelMapsClick}
                 className="flex-1 px-3 text-sm font-semibold text-white rounded-lg min-h-12 bg-slate-700 hover:bg-slate-800"
               >
-                여행지도 복원
+                여행지도 가져오기
               </button>
             </div>
             {mapError && <p className="mb-2 text-sm font-semibold text-red-600">{mapError}</p>}

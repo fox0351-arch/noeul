@@ -2,7 +2,7 @@ const KEY = 'noeul.fieldTest.v1';
 
 export const FIELD_TEST_ITEMS = [
   { id: 'install', label: '앱 설치' },
-  { id: 'gps', label: 'GPS 수신' },
+  { id: 'gps', label: '내 위치 확인' },
   { id: 'offline', label: '오프라인 동작' },
   { id: 'gpx', label: 'GPX 불러오기' },
   { id: 'follow', label: '루트 따라가기' },
