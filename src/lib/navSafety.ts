@@ -30,23 +30,12 @@ export const OFF_ROUTE_VOICE: Record<20 | 50 | 100, string> = {
 export const RETURN_TO_ROUTE_VOICE = '와. 잘 찾으셨어요. 다시 길을 따라가시면 돼요.';
 
 export const VOICE_PREVIEW: Record<Exclude<VoiceStyle, 'mute'>, string> = {
-  female: '여성 목소리로 안내하겠습니다.',
-  male: '남성 목소리로 안내하겠습니다.',
+  female: '길을 조금 벗어났어요. 초록색 지점으로 돌아와 주세요.',
+  male: '길을 조금 벗어났어요. 초록색 지점으로 돌아와 주세요.',
 };
 
 export function offRouteToastText(meters: number): string {
   return `⚠ 경로 이탈 ${meters}m\n📍 초록색 지점으로\n돌아오세요`;
-}
-
-/** 여성·남성 안내 녹음 */
-function clipForText(style: Exclude<VoiceStyle, 'mute'>, text: string): string | null {
-  const folder = `/voice/${style}`;
-  if (text === OFF_ROUTE_VOICE[20]) return `${folder}/20.mp3`;
-  if (text === OFF_ROUTE_VOICE[50]) return `${folder}/50.mp3`;
-  if (text === OFF_ROUTE_VOICE[100]) return `${folder}/100.mp3`;
-  if (text === RETURN_TO_ROUTE_VOICE) return `${folder}/return.mp3`;
-  if (text === VOICE_PREVIEW[style]) return `${folder}/preview.mp3`;
-  return null;
 }
 
 let currentVoiceAudio: HTMLAudioElement | null = null;
@@ -57,29 +46,6 @@ function stopVoiceAudio(): void {
   currentVoiceAudio.src = '';
   currentVoiceAudio = null;
 }
-
-function playVoiceClip(url: string): boolean {
-  if (typeof Audio === 'undefined') return false;
-  stopVoiceAudio();
-  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    window.speechSynthesis.cancel();
-  }
-  const audio = new Audio(url);
-  audio.preload = 'auto';
-  currentVoiceAudio = audio;
-  void audio.play().catch(() => {
-    if (currentVoiceAudio === audio) currentVoiceAudio = null;
-  });
-  return true;
-}
-
-const VOICE_TONE: Record<
-  Exclude<VoiceStyle, 'mute'>,
-  { pitch: number; rate: number }
-> = {
-  female: { pitch: 1, rate: 0.96 },
-  male: { pitch: 0.78, rate: 0.92 },
-};
 
 let activeVoiceStyle: VoiceStyle = 'female';
 
@@ -96,22 +62,30 @@ function koreanVoicePool(): SpeechSynthesisVoice[] {
 }
 
 function pickVoiceForStyle(style: Exclude<VoiceStyle, 'mute'>): SpeechSynthesisVoice | null {
-  const pool = koreanVoicePool();
-  if (pool.length === 0) return null;
+  const pool = koreanVoicePool().filter(
+    (voice) => !/compact|robot|eloquence|espeak/i.test(`${voice.name} ${voice.voiceURI}`)
+  );
+  const voices = pool.length > 0 ? pool : koreanVoicePool();
+  if (voices.length === 0) return null;
 
-  const byName = (pattern: RegExp) => pool.find((voice) => pattern.test(`${voice.name} ${voice.voiceURI}`));
+  const byName = (pattern: RegExp) => voices.find((voice) => pattern.test(`${voice.name} ${voice.voiceURI}`));
+  const local = voices.filter((voice) => voice.localService);
 
   if (style === 'male') {
     return (
       byName(/injoon|hyunsu|jinho|wavenet-c|wavenet-d|standard-c|standard-d|남성|male|man|minho/i) ??
-      pool.find((voice) => !/female|woman|여성|nari|sunhi|heami|yuna/i.test(voice.name)) ??
-      pool[0]
+      local.find((voice) => !/female|woman|여성|nari|sunhi|heami|yuna/i.test(voice.name)) ??
+      voices.find((voice) => !/female|woman|여성|nari|sunhi|heami|yuna/i.test(voice.name)) ??
+      voices[0]
     );
   }
 
   return (
-    byName(/heami|sunhi|yuna|nari|wavenet-a|wavenet-b|standard-a|standard-b|neural|premium|여성|female|woman/i) ??
-    pool[0]
+    byName(/google/i) ??
+    byName(/samsung|삼성/i) ??
+    byName(/heami|sunhi|yuna|nari|neural|premium|여성|female|woman/i) ??
+    local[0] ??
+    voices[0]
   );
 }
 
@@ -126,18 +100,15 @@ export function warmSpeechVoices(): void {
 export function speakKorean(text: string): void {
   if (typeof window === 'undefined') return;
   if (activeVoiceStyle === 'mute') return;
-  const clip = clipForText(activeVoiceStyle, text);
-  if (clip && playVoiceClip(clip)) return;
   if (!('speechSynthesis' in window)) return;
   try {
+    stopVoiceAudio();
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'ko-KR';
     const voice = pickVoiceForStyle(activeVoiceStyle);
     if (voice) utterance.voice = voice;
-    const tone = VOICE_TONE[activeVoiceStyle];
-    utterance.rate = tone.rate;
-    utterance.pitch = tone.pitch;
+    utterance.rate = 1;
     utterance.volume = 1;
     window.speechSynthesis.speak(utterance);
   } catch {

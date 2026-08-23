@@ -170,7 +170,7 @@ html.high-contrast button {
     flex: none;
   }
 
-  .map-pane > div {
+  .map-pane > .map-canvas {
     min-height: 100% !important;
     height: 100%;
   }

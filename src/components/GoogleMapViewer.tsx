@@ -455,5 +455,5 @@ export default function GoogleMapViewer({
     };
   }, []);
 
-  return <div ref={mapRef} className="w-full h-full min-h-[400px]" />;
+  return <div ref={mapRef} className="map-canvas w-full h-full min-h-[400px]" />;
 }

@@ -1792,7 +1792,7 @@ export default function HomePage() {
             returnPoint={offRouteLevel >= 20 ? returnPoint : null}
           />
           {isFollowMode && (
-            <div className="absolute z-20 flex gap-2 top-2 left-2 right-2">
+            <div className="absolute z-20 flex flex-col items-end gap-1.5 top-2 right-12 pointer-events-none">
               <button
                 type="button"
                 onClick={() => {
@@ -1800,13 +1800,14 @@ export default function HomePage() {
                   saveUserSettings({ headingUp: false });
                 }}
                 aria-pressed={!headingUpMode}
-                className={`flex-1 px-2 text-base font-black rounded-lg min-h-12 border-2 ${
+                className={`pointer-events-auto px-2 text-xs font-black rounded-md border ${
                   !headingUpMode
-                    ? 'text-white bg-slate-900 border-slate-900'
-                    : 'text-slate-900 bg-white/95 border-slate-400'
+                    ? 'text-white bg-slate-900/80 border-slate-900/80'
+                    : 'text-slate-900 bg-white/75 border-slate-400/80'
                 }`}
+                style={{ minHeight: 36, minWidth: 72 }}
               >
-                🧭 북쪽고정
+                🧭 북쪽
               </button>
               <button
                 type="button"
@@ -1815,11 +1816,12 @@ export default function HomePage() {
                   saveUserSettings({ headingUp: true });
                 }}
                 aria-pressed={headingUpMode}
-                className={`flex-1 px-2 text-base font-black rounded-lg min-h-12 border-2 ${
+                className={`pointer-events-auto px-2 text-xs font-black rounded-md border ${
                   headingUpMode
-                    ? 'text-white bg-blue-800 border-blue-800'
-                    : 'text-slate-900 bg-white/95 border-slate-400'
+                    ? 'text-white bg-blue-800/80 border-blue-800/80'
+                    : 'text-slate-900 bg-white/75 border-slate-400/80'
                 }`}
+                style={{ minHeight: 36, minWidth: 72 }}
               >
                 🚶 따라가기
               </button>
