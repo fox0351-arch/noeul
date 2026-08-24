@@ -61,6 +61,13 @@ function lookAhead(
   return { lat: ahead.latitude, lng: ahead.longitude };
 }
 
+export function exitBrowserFullscreen(): void {
+  if (typeof document === 'undefined') return;
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch((err) => console.log('Fullscreen exit error:', err));
+  }
+}
+
 function headingArrowIcon(rotation: number): google.maps.Symbol {
   return {
     path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
@@ -230,6 +237,7 @@ export class MapManager {
     locateBtn.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      exitBrowserFullscreen();
       this.onLocateMe?.();
     });
 
@@ -255,6 +263,7 @@ export class MapManager {
     sosBtn.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      exitBrowserFullscreen();
       this.onOpenSos?.();
     });
 

@@ -987,6 +987,9 @@ export default function HomePage() {
   };
 
   const handleOpenSos = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch((err) => console.log('Fullscreen exit error:', err));
+    }
     setSosNotice('');
     setSosStep(1);
   };
@@ -1027,6 +1030,9 @@ export default function HomePage() {
   };
 
   const handleLocateMe = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch((err) => console.log('Fullscreen exit error:', err));
+    }
     setMapError('');
     setLocateToast('');
     if (!navigator.geolocation) {
