@@ -2038,41 +2038,13 @@ export default function HomePage() {
             routePoints={routePoints}
             userLocation={userLocation}
             returnPoint={offRouteLevel >= 20 ? returnPoint : null}
+            onLocateMe={handleLocateMe}
+            onOpenSos={handleOpenSos}
+            locateBusy={isLocating}
+            weakGps={Boolean(
+              userLocation && gpsAccuracyM != null && gpsAccuracyM >= WEAK_GPS_ACCURACY_M
+            )}
           />
-          <div className="absolute z-40 flex flex-col items-center gap-2 pointer-events-none top-2 left-2">
-            <button
-              type="button"
-              onClick={handleLocateMe}
-              disabled={isLocating}
-              className="relative flex items-center justify-center overflow-hidden rounded-full pointer-events-auto bg-white/70 shadow-[0_4px_14px_rgba(15,23,42,0.22)] disabled:opacity-60"
-              style={{ width: 36, height: 36 }}
-              aria-label="현재 위치로 이동"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/icon-my-location.jpg"
-                alt=""
-                width={24}
-                height={24}
-                className="object-cover w-6 h-6 pointer-events-none"
-                draggable={false}
-              />
-              {userLocation && gpsAccuracyM != null && gpsAccuracyM >= WEAK_GPS_ACCURACY_M && (
-                <span className="absolute flex items-center justify-center w-3.5 h-3.5 text-[9px] font-black text-white bg-red-600 rounded-full -top-0.5 -right-0.5">
-                  !
-                </span>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenSos}
-              className="flex items-center justify-center text-[11px] leading-none font-black text-orange-700 bg-orange-100 border border-orange-400 rounded-full pointer-events-auto shadow-[0_3px_10px_rgba(154,52,18,0.28)] hover:bg-orange-200"
-              style={{ width: 48, height: 48 }}
-              aria-label="긴급 SOS"
-            >
-              SOS
-            </button>
-          </div>
           {isFollowMode && (
             <div className="absolute z-20 flex flex-col items-end gap-1.5 top-2 right-12 pointer-events-none">
               <button

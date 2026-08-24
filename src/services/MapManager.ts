@@ -114,6 +114,14 @@ export class MapManager {
   private unsubscribeStore: (() => void) | null = null;
   private moveCameraCount = 0;
   private fitBoundsCount = 0;
+  private fabRoot: HTMLDivElement | null = null;
+  private locateBtn: HTMLButtonElement | null = null;
+  private locateBadge: HTMLSpanElement | null = null;
+  private onLocateMe: (() => void) | null = null;
+  private onOpenSos: (() => void) | null = null;
+  private locateBusy = false;
+  private weakGps = false;
+  private showMapFabs = false;
 
   private constructor() {}
 
@@ -150,6 +158,7 @@ export class MapManager {
     });
     this.map = map;
     this.lastCameraAt = 0;
+    if (this.showMapFabs) this.mountFabControl();
     this.setPlaces(this.places);
     this.setRoute(this.routePoints);
     this.setReturnPoint(this.returnPoint, this.returnUser);
@@ -162,6 +171,7 @@ export class MapManager {
   }
 
   detach(): void {
+    this.removeFabControl();
     this.stopCameraLoop();
     this.unsubscribeStore?.();
     this.unsubscribeStore = null;
@@ -182,6 +192,97 @@ export class MapManager {
 
   setOnSelectPlace(handler: (id: string) => void): void {
     this.onSelectPlace = handler;
+  }
+
+  setMapFabs(opts: {
+    onLocateMe: () => void;
+    onOpenSos: () => void;
+    locateBusy: boolean;
+    weakGps: boolean;
+  }): void {
+    this.showMapFabs = true;
+    this.onLocateMe = opts.onLocateMe;
+    this.onOpenSos = opts.onOpenSos;
+    this.locateBusy = opts.locateBusy;
+    this.weakGps = opts.weakGps;
+    this.syncFabState();
+    if (this.map && !this.fabRoot) this.mountFabControl();
+  }
+
+  disableMapFabs(): void {
+    this.showMapFabs = false;
+    this.onLocateMe = null;
+    this.onOpenSos = null;
+    this.removeFabControl();
+  }
+
+  private mountFabControl(): void {
+    const map = this.map;
+    if (!map || !window.google) return;
+
+    const root = document.createElement('div');
+    root.className = 'noeul-map-fabs';
+
+    const locateBtn = document.createElement('button');
+    locateBtn.type = 'button';
+    locateBtn.className = 'noeul-map-fab-locate';
+    locateBtn.setAttribute('aria-label', '현재 위치로 이동');
+    locateBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.onLocateMe?.();
+    });
+
+    const icon = document.createElement('img');
+    icon.src = '/icon-my-location.jpg';
+    icon.alt = '';
+    icon.width = 24;
+    icon.height = 24;
+    icon.draggable = false;
+    locateBtn.appendChild(icon);
+
+    const badge = document.createElement('span');
+    badge.className = 'noeul-map-fab-badge';
+    badge.textContent = '!';
+    badge.hidden = true;
+    locateBtn.appendChild(badge);
+
+    const sosBtn = document.createElement('button');
+    sosBtn.type = 'button';
+    sosBtn.className = 'noeul-map-fab-sos';
+    sosBtn.setAttribute('aria-label', '긴급 SOS');
+    sosBtn.textContent = 'SOS';
+    sosBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.onOpenSos?.();
+    });
+
+    root.appendChild(locateBtn);
+    root.appendChild(sosBtn);
+
+    this.fabRoot = root;
+    this.locateBtn = locateBtn;
+    this.locateBadge = badge;
+    this.syncFabState();
+    map.controls[google.maps.ControlPosition.TOP_LEFT].push(root);
+  }
+
+  private syncFabState(): void {
+    if (this.locateBtn) this.locateBtn.disabled = this.locateBusy;
+    if (this.locateBadge) this.locateBadge.hidden = !this.weakGps;
+  }
+
+  private removeFabControl(): void {
+    const map = this.map;
+    if (map && this.fabRoot && window.google?.maps) {
+      const controls = map.controls[google.maps.ControlPosition.TOP_LEFT];
+      const idx = controls.getArray().indexOf(this.fabRoot);
+      if (idx >= 0) controls.removeAt(idx);
+    }
+    this.fabRoot = null;
+    this.locateBtn = null;
+    this.locateBadge = null;
   }
 
   setPlaces(places: PlaceItem[]): void {

@@ -186,3 +186,82 @@ html.high-contrast button {
     overflow: visible;
   }
 }
+
+.noeul-map-fabs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 8px 0;
+  pointer-events: auto;
+}
+
+.noeul-map-fab-locate {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.22);
+  cursor: pointer;
+}
+
+.noeul-map-fab-locate:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.noeul-map-fab-locate img {
+  width: 24px;
+  height: 24px;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.noeul-map-fab-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 9px;
+  font-weight: 900;
+  color: #fff;
+  background: #dc2626;
+  border-radius: 9999px;
+}
+
+.noeul-map-fab-badge[hidden] {
+  display: none;
+}
+
+.noeul-map-fab-sos {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 1px solid #fb923c;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  color: #c2410c;
+  background: #ffedd5;
+  box-shadow: 0 3px 10px rgba(154, 52, 18, 0.28);
+  cursor: pointer;
+}
+
+.noeul-map-fab-sos:hover {
+  background: #fed7aa;
+}
