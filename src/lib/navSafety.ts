@@ -139,23 +139,49 @@ function liveVoiceByUri(uri: string | undefined): SpeechSynthesisVoice | null {
   return window.speechSynthesis.getVoices().find((voice) => voice.voiceURI === uri) ?? null;
 }
 
+function voiceLabel(voice: SpeechSynthesisVoice | null): string {
+  return `${voice?.name ?? ''} ${voice?.voiceURI ?? ''} ${voice?.lang ?? ''}`;
+}
+
+function isNamedMaleVoice(voice: SpeechSynthesisVoice | null): boolean {
+  if (!voice) return false;
+  const label = voiceLabel(voice);
+  if (/female|woman|feminine|여성|여자|heami|sunhi|yuna|nari/i.test(label)) return false;
+  return /남성|남자|\bmale\b|injoon|hyunsu|jinho|minho|wavenet-[cd]|standard-[cd]|neural2-[cd]/i.test(label);
+}
+
 function bindUtteranceVoice(utterance: SpeechSynthesisUtterance): void {
   utterance.lang = 'ko-KR';
-  const picked = activeVoiceStyle === 'mute' ? null : pickVoiceForStyle(activeVoiceStyle);
-  const voice = picked ? liveVoiceByUri(picked.voiceURI) ?? picked : null;
-  if (voice) {
-    utterance.voice = voice;
-    utterance.lang = voice.lang || 'ko-KR';
-  }
   utterance.rate = 0.95;
   utterance.volume = 1;
-  const label = `${voice?.name ?? ''} ${voice?.voiceURI ?? ''}`;
-  if (activeVoiceStyle === 'male') {
-    const femaleOnly = /heami|sunhi|yuna|nari|female|woman|여성/i.test(label);
-    utterance.pitch = !voice || femaleOnly ? 0.82 : 0.92;
-  } else {
-    utterance.pitch = 1.05;
+  if (activeVoiceStyle === 'mute') return;
+
+  const allVoices = refreshVoiceCache();
+  const picked = pickVoiceForStyle(activeVoiceStyle);
+  const voice = picked ? liveVoiceByUri(picked.voiceURI) ?? picked : null;
+
+  if (activeVoiceStyle === 'female') {
+    if (voice) {
+      utterance.voice = voice;
+      utterance.lang = voice.lang || 'ko-KR';
+    }
+    utterance.pitch = 1.0;
+    return;
   }
+
+  const nativeMale = isNamedMaleVoice(voice)
+    ? voice
+    : allVoices.find((item) => isNamedMaleVoice(item)) ?? null;
+  if (nativeMale) {
+    utterance.voice = nativeMale;
+    utterance.lang = nativeMale.lang || 'ko-KR';
+    utterance.pitch = 0.92;
+    return;
+  }
+
+  // 기기에 남성 음성이 없으면 voice를 묶지 않아야 Android가 pitch를 적용합니다.
+  utterance.voice = null;
+  utterance.pitch = 0.5;
 }
 
 export function speakKorean(text: string): void {

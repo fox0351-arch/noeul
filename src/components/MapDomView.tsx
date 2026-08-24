@@ -64,5 +64,5 @@ export default function MapDomView({
     MapManager.getInstance().setReturnPoint(returnPoint, userLocation);
   }, [returnPoint, userLocation]);
 
-  return <div ref={hostRef} className="map-canvas w-full h-full min-h-[400px]" />;
+  return <div ref={hostRef} className="relative z-0 w-full h-full min-h-[400px] map-canvas" />;
 }
