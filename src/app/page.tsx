@@ -12,7 +12,8 @@ import { generateTravelBlogEssay, TravelBlogDraft } from '@/lib/travelBlogEssay'
 import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem, withPresetChecklistTexts } from '@/types/travelMap';
 import { TravelRoute, routePointsToLocations } from '@/types/route';
 import { parseTrailFile } from '@/lib/gpxKmlParser';
-import { OffRouteLevel, averageLocations, bearingDegrees, closestPointOnRoute, distanceToRouteMeters, haversineMeters, offRouteLevelFromDistance, speedKmhFromCoords, GPS_JUMP_MAX_MPS, GPS_JUMP_MIN_M, GPS_SMOOTH_COUNT, MAX_ACCEPT_GPS_ACCURACY_M, MIN_HEADING_MOVE_M, MIN_MAP_ROTATE_KMH, OFF_ROUTE_HOLD_MS, OFF_ROUTE_THRESHOLD_M, STOP_MAP_ROTATE_KMH, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
+import { OffRouteLevel, bearingDegrees, closestPointOnRoute, distanceToRouteMeters, offRouteLevelFromDistance, MIN_MAP_ROTATE_KMH, OFF_ROUTE_HOLD_MS, OFF_ROUTE_THRESHOLD_M, STOP_MAP_ROTATE_KMH, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
+import { LocationSignalManager } from '@/workers/locationSignalManager';
 import {
   formatSosMessage,
   loadBatterySave,
@@ -41,7 +42,9 @@ import { loadGuardianPhone, saveGuardianPhone } from '@/lib/guardianStorage';
 import { FIELD_TEST_ITEMS, loadFieldTestChecks, saveFieldTestChecks } from '@/lib/fieldTestChecklist';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
 import { loadUserSettings, saveUserSettings, type VoiceStyle } from '@/lib/userData';
-import GoogleMapViewer, { ARROW_ROTATION_OFFSETS, type FollowCameraDebug } from '@/components/GoogleMapViewer';
+import MapDomView, { ARROW_ROTATION_OFFSETS } from '@/components/MapDomView';
+import SimQueryRedirect from '@/components/SimQueryRedirect';
+import { useLocationStore } from '@/store/useLocationStore';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
 
 function formatMapDate(iso: string): string {
@@ -130,14 +133,10 @@ export default function HomePage() {
   const lastFixAtRef = useRef(0);
   const mapHeadingRef = useRef<number | null>(null);
   const mapRotatingRef = useRef(false);
-  const gpsBufferRef = useRef<PlaceLocation[]>([]);
   const lastGoodHeadingRef = useRef<number | null>(null);
   const lastRawGpsRef = useRef<PlaceLocation | null>(null);
-  const headingOriginRef = useRef<PlaceLocation | null>(null);
   const currentRouteRef = useRef(currentRoute);
   currentRouteRef.current = currentRoute;
-  const [followCameraDebug, setFollowCameraDebug] = useState<FollowCameraDebug | null>(null);
-  const [gpsReceiveCount, setGpsReceiveCount] = useState(0);
   const [arrowRotationOffset, setArrowRotationOffset] = useState(0);
   const { installed, hint: installHint, install: installApp } = usePwaInstall();
 
@@ -177,10 +176,6 @@ export default function HomePage() {
 
   const handleSelectPlace = useCallback((id: string) => {
     setSelectedPlaceId(id);
-  }, []);
-
-  const handleFollowCamera = useCallback((info: FollowCameraDebug) => {
-    setFollowCameraDebug(info);
   }, []);
 
   useEffect(() => {
@@ -319,10 +314,6 @@ export default function HomePage() {
 
     let cancelled = false;
     const intervalMs = batterySave ? 10000 : 800;
-    let lastAcceptedAt = 0;
-    gpsBufferRef.current = [];
-    headingOriginRef.current = lastRawGpsRef.current;
-    let watchId: number | null = null;
     let offRouteSince = 0;
     console.info('[노을-follow] watch start', { isFollowMode: true, intervalMs });
 
@@ -376,131 +367,101 @@ export default function HomePage() {
       }
     };
 
-    const updateFromPosition = (coords: GeolocationCoordinates) => {
-      if (cancelled) return;
-      const now = Date.now();
-      if (now - lastAcceptedAt < intervalMs - 150) return;
-
-      const accuracy = Number.isFinite(coords.accuracy) ? coords.accuracy : null;
-      setGpsAccuracyM(accuracy);
-      if (accuracy != null && accuracy > MAX_ACCEPT_GPS_ACCURACY_M) return;
-
-      lastAcceptedAt = now;
-      setGpsReceiveCount((n) => n + 1);
-
-      const raw: PlaceLocation = {
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-      };
-      const prevRaw = lastRawGpsRef.current;
-      if (prevRaw && lastFixAtRef.current) {
-        const jumpM = haversineMeters(prevRaw, raw);
-        const dt = now - lastFixAtRef.current;
-        const mps = (jumpM / Math.max(dt, 1)) * 1000;
-        if (jumpM >= GPS_JUMP_MIN_M && mps > GPS_JUMP_MAX_MPS) {
-          console.info('[노을-gps] ignore jump', { jumpM: Math.round(jumpM), dt, mps: Math.round(mps * 10) / 10 });
-          return;
-        }
-      }
-      lastRawGpsRef.current = raw;
-      gpsBufferRef.current = [...gpsBufferRef.current, raw].slice(-GPS_SMOOTH_COUNT);
-      const next = averageLocations(gpsBufferRef.current);
-      const prevFix = lastFixRef.current;
-      const elapsedMs = lastFixAtRef.current ? now - lastFixAtRef.current : 0;
-      const speedKmh = speedKmhFromCoords(coords, prevFix, next, elapsedMs);
-      const movedM = prevFix ? haversineMeters(prevFix, next) : 0;
-
-      let heading: number | null = lastGoodHeadingRef.current;
-      if (!headingOriginRef.current) headingOriginRef.current = prevRaw ?? raw;
-      const origin = headingOriginRef.current;
-      const movedFromOrigin = origin ? haversineMeters(origin, raw) : 0;
-      if (origin && movedFromOrigin >= Math.max(8, MIN_HEADING_MOVE_M)) {
-        heading = bearingDegrees(origin, raw);
-        headingOriginRef.current = raw;
-        console.info('[노을-heading]', {
-          fromLat: origin.latitude,
-          fromLng: origin.longitude,
-          toLat: raw.latitude,
-          toLng: raw.longitude,
-          movedM: Math.round(movedFromOrigin * 10) / 10,
-          bearing: Math.round(heading),
-          gpsHeading: coords.heading,
-        });
-      }
-
-      if (speedKmh != null) {
-        if (speedKmh >= MIN_MAP_ROTATE_KMH) mapRotatingRef.current = true;
-        if (speedKmh < STOP_MAP_ROTATE_KMH) mapRotatingRef.current = false;
-      }
-      if (heading != null && Number.isFinite(heading)) {
-        lastGoodHeadingRef.current = heading;
-        mapHeadingRef.current = heading;
-      }
-
-      lastFixRef.current = next;
-      lastFixAtRef.current = now;
-      setUserLocation(next);
-      setHeadingDeg(lastGoodHeadingRef.current);
-      setMapHeadingDeg(mapHeadingRef.current);
-      saveLastGps({
-        latitude: next.latitude,
-        longitude: next.longitude,
-        accuracyM: accuracy,
-        heading: lastGoodHeadingRef.current,
-        savedAt: new Date().toISOString(),
-      });
-      setMapError('');
-
-      const route = currentRouteRef.current;
-      if (!route || route.points.length < 2) return;
-      const routeLocations = routePointsToLocations(route.points);
-      const distance = distanceToRouteMeters(next, routeLocations);
-      applyOffRoute(distance, next, routeLocations);
-    };
-
-    const onError = (err: GeolocationPositionError) => {
-      if (cancelled) return;
-      if (err.code === err.PERMISSION_DENIED) {
-        setMapError('위치 권한이 꺼져 있습니다. 브라우저 설정에서 위치를 허용한 뒤 다시 따라가기를 눌러 주세요.');
-        setIsFollowMode(false);
-        return;
-      }
-      if (err.code === err.TIMEOUT) {
-        setMapError('GPS가 느립니다. 하늘이 보이는 곳에서 잠시 기다려 주세요. 추적은 계속됩니다.');
-        return;
-      }
-      setMapError('GPS를 찾지 못했습니다. 건물 밖, 하늘이 보이는 곳으로 이동해 주세요. 추적은 계속됩니다.');
-    };
-
-    const gpsOptions: PositionOptions = {
-      enableHighAccuracy: true,
-      maximumAge: intervalMs,
-      timeout: batterySave ? 15000 : 10000,
-    };
-
     if (!navigator.geolocation) {
       setMapError('이 기기에서는 위치를 쓸 수 없습니다. 위치 기능이 있는 휴대폰 브라우저를 사용해 주세요.');
       setIsFollowMode(false);
       return;
     }
 
-    watchId = navigator.geolocation.watchPosition(
-      (pos) => updateFromPosition(pos.coords),
-      onError,
-      gpsOptions
-    );
+    const signal = new LocationSignalManager();
+    signal.start({
+      intervalMs,
+      batterySave,
+      onLocation: (fix) => {
+        if (cancelled) return;
+        const next: PlaceLocation = {
+          latitude: fix.coords.lat,
+          longitude: fix.coords.lng,
+        };
+        const heading = fix.hasBearing && Number.isFinite(fix.bearing) ? fix.bearing : null;
+        const accuracy = Number.isFinite(fix.accuracy) ? fix.accuracy : null;
+
+        setGpsAccuracyM(accuracy);
+        lastRawGpsRef.current = next;
+
+        if (fix.speedKmh != null) {
+          if (fix.speedKmh >= MIN_MAP_ROTATE_KMH) mapRotatingRef.current = true;
+          if (fix.speedKmh < STOP_MAP_ROTATE_KMH) mapRotatingRef.current = false;
+        }
+        if (heading != null) {
+          lastGoodHeadingRef.current = heading;
+          mapHeadingRef.current = heading;
+        }
+
+        lastFixRef.current = next;
+        lastFixAtRef.current = fix.timestamp;
+        setUserLocation(next);
+        setHeadingDeg(lastGoodHeadingRef.current);
+        setMapHeadingDeg(mapHeadingRef.current);
+        setMapError('');
+        useLocationStore.getState().applyFix({
+          lat: next.latitude,
+          lng: next.longitude,
+          bearing: lastGoodHeadingRef.current,
+          accuracy,
+          speedKmh: fix.speedKmh,
+          timestamp: fix.timestamp,
+          fromGps: fix.fromGps,
+        });
+        useLocationStore.getState().setMapHeadingDeg(mapHeadingRef.current);
+
+        if (!fix.fromGps) return;
+
+        saveLastGps({
+          latitude: next.latitude,
+          longitude: next.longitude,
+          accuracyM: accuracy,
+          heading: lastGoodHeadingRef.current,
+          savedAt: new Date().toISOString(),
+        });
+
+        const route = currentRouteRef.current;
+        if (!route || route.points.length < 2) return;
+        const routeLocations = routePointsToLocations(route.points);
+        const distance = distanceToRouteMeters(next, routeLocations);
+        applyOffRoute(distance, next, routeLocations);
+      },
+      onError: (err) => {
+        if (cancelled) return;
+        if (err.code === 1) {
+          setMapError('위치 권한이 꺼져 있습니다. 브라우저 설정에서 위치를 허용한 뒤 다시 따라가기를 눌러 주세요.');
+          setIsFollowMode(false);
+          return;
+        }
+        if (err.code === 3) {
+          setMapError('GPS가 느립니다. 하늘이 보이는 곳에서 잠시 기다려 주세요. 추적은 계속됩니다.');
+          return;
+        }
+        setMapError('GPS를 찾지 못했습니다. 건물 밖, 하늘이 보이는 곳으로 이동해 주세요. 추적은 계속됩니다.');
+      },
+    });
 
     return () => {
       cancelled = true;
-      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+      signal.stop();
       stopRepeatingSpeech();
       console.info('[노을-follow] watch stop');
     };
   }, [isFollowMode, batterySave]);
 
   useEffect(() => {
-    console.info('[노을-follow] isFollowMode 변경', isFollowMode);
-  }, [isFollowMode]);
+    const store = useLocationStore.getState();
+    store.setFollowMode(isFollowMode);
+    store.setHeadingUp(isFollowMode && headingUpMode);
+    store.setMapHeadingDeg(mapHeadingDeg);
+    store.setRecenterId(recenterRequestId);
+    store.setArrowRotationOffset(arrowRotationOffset);
+  }, [isFollowMode, headingUpMode, mapHeadingDeg, recenterRequestId, arrowRotationOffset]);
 
   useEffect(() => {
     if (!selectedPlaceId) {
@@ -824,7 +785,8 @@ export default function HomePage() {
     setMapNotice('');
     if (isFollowMode) {
       setIsFollowMode(false);
-      setFollowCameraDebug(null);
+      useLocationStore.getState().setFollowMode(false);
+      useLocationStore.getState().setCameraDebug(null);
       setMapNotice('루트 따라가기를 종료했습니다.');
       return;
     }
@@ -837,6 +799,7 @@ export default function HomePage() {
       return;
     }
     unlockAlertAudio();
+    void LocationSignalManager.requestSensorPermissions();
     const last = loadLastGps();
     if (last) {
       const loc = { latitude: last.latitude, longitude: last.longitude };
@@ -847,12 +810,18 @@ export default function HomePage() {
       setHeadingDeg(last.heading);
       mapHeadingRef.current = last.heading;
       setMapHeadingDeg(last.heading);
+      lastGoodHeadingRef.current = last.heading ?? lastGoodHeadingRef.current;
+      useLocationStore.getState().applyFix({
+        lat: loc.latitude,
+        lng: loc.longitude,
+        bearing: lastGoodHeadingRef.current,
+        accuracy: last.accuracyM,
+        speedKmh: null,
+        timestamp: Date.now(),
+        fromGps: true,
+      });
     }
     mapRotatingRef.current = false;
-    gpsBufferRef.current = [];
-    headingOriginRef.current = lastRawGpsRef.current;
-    setGpsReceiveCount(0);
-    setFollowCameraDebug(null);
     setHeadingUpMode(true);
     saveUserSettings({ headingUp: true });
     lastGoodHeadingRef.current = last?.heading ?? lastGoodHeadingRef.current;
@@ -1324,6 +1293,7 @@ export default function HomePage() {
 
   return (
     <main className={`flex flex-col h-dvh bg-slate-50 ${isFollowMode ? 'hiking-mode' : ''}`}>
+      <SimQueryRedirect />
       <header className="flex items-center justify-between gap-2 px-3 py-2 bg-white border-b shrink-0 md:px-6 md:py-3 border-slate-200">
         <div className="flex items-center min-w-0 gap-2">
           <span className="text-xl font-black text-amber-600">노을</span>
@@ -1374,22 +1344,12 @@ export default function HomePage() {
       </header>
       {isFollowMode && (
         <div
-          className="fixed left-2 z-[100] px-3 py-2 text-white rounded-lg shadow-lg bg-black/85"
+          className="fixed left-2 z-[100] px-3 py-2 rounded-lg shadow-lg bg-black/85"
           style={{ top: 'calc(env(safe-area-inset-top, 0px) + 3.4rem)' }}
         >
-          <p className="text-2xl font-black leading-tight">GPS {gpsReceiveCount}</p>
-          <p className="text-2xl font-black leading-tight">setCenter {followCameraDebug?.setCenterCount ?? 0}</p>
-          <p className="text-2xl font-black leading-tight">panTo {followCameraDebug?.panToCount ?? 0}</p>
-          <p className="text-2xl font-black leading-tight">moveCamera {followCameraDebug?.moveCameraCount ?? 0}</p>
-          <p className="text-2xl font-black leading-tight">fitBounds {followCameraDebug?.fitBoundsCount ?? 0}</p>
-          <p className="mt-1 text-sm font-bold leading-snug text-amber-200">
-            전방 {followCameraDebug?.centerDeltaM ?? '-'}m
-            {' · '}
-            {arrowRotationOffset === 0 ? 'bearing' : arrowRotationOffset > 0 ? `+${arrowRotationOffset}` : String(arrowRotationOffset)}
-          </p>
           <button
             type="button"
-            className="mt-2 px-3 py-2 text-lg font-black text-slate-900 bg-yellow-300 rounded-md min-h-12"
+            className="px-3 py-2 text-lg font-black text-slate-900 bg-yellow-300 rounded-md min-h-12"
             onClick={() => {
               const idx = ARROW_ROTATION_OFFSETS.indexOf(
                 arrowRotationOffset as (typeof ARROW_ROTATION_OFFSETS)[number]
@@ -1885,21 +1845,14 @@ export default function HomePage() {
           </div>
 
         <div className="relative w-full min-h-0 workspace-map map-pane">
-          <GoogleMapViewer
+          <MapDomView
             center={center}
             places={displayedPlaces}
             selectedPlaceId={selectedPlaceId}
             onSelectPlace={handleSelectPlace}
             routePoints={routePoints}
             userLocation={userLocation}
-            headingDeg={headingDeg}
-            followMode={isFollowMode}
-            headingUp={isFollowMode && headingUpMode}
-            mapHeadingDeg={mapHeadingDeg}
-            recenterRequestId={recenterRequestId}
             returnPoint={offRouteLevel >= 20 ? returnPoint : null}
-            onFollowCamera={handleFollowCamera}
-            arrowRotationOffset={arrowRotationOffset}
           />
           {isFollowMode && (
             <div className="absolute z-20 flex flex-col items-end gap-1.5 top-2 right-12 pointer-events-none">

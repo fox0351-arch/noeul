@@ -1,4 +1,6 @@
-const CACHE_NAME = 'noeul-walk-v2';
+// Wake Lock는 페이지(WakeLockProvider)가 담당합니다. SW는 화면을 켜 둘 수 없습니다.
+// 대신 오래된 지도 스크립트를 붙잡지 않고, 관리자 시뮬 HTML을 홈 캐시에 덮어쓰지 않습니다.
+const CACHE_NAME = 'noeul-walk-v3';
 const PRECACHE = [
   '/',
   '/manifest.json',
@@ -29,19 +31,22 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/')) return;
+  if (url.pathname.startsWith('/admin')) return;
 
-  event.respondWith(handleFetch(request));
+  event.respondWith(handleFetch(request, url));
 });
 
-async function handleFetch(request) {
+async function handleFetch(request, url) {
   if (request.mode === 'navigate') {
     try {
       const fresh = await fetch(request);
-      const cache = await caches.open(CACHE_NAME);
-      cache.put('/', fresh.clone());
+      if (fresh.ok && (url.pathname === '/' || url.pathname === '')) {
+        const cache = await caches.open(CACHE_NAME);
+        cache.put('/', fresh.clone());
+      }
       return fresh;
     } catch {
-      const cached = (await caches.match('/')) || (await caches.match(request));
+      const cached = (await caches.match(request)) || (await caches.match('/'));
       if (cached) return cached;
       return new Response('오프라인 모드로 동작 중', {
         status: 200,
