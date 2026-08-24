@@ -2,7 +2,6 @@ import {
   GPS_JUMP_MAX_MPS,
   GPS_JUMP_MIN_M,
   MAX_ACCEPT_GPS_ACCURACY_M,
-  MIN_HEADING_MOVE_M,
   bearingDegrees,
   haversineMeters,
   speedKmhFromCoords,
@@ -25,11 +24,12 @@ let lastRaw: { lat: number; lng: number } | null = null;
 let lastRawAt = 0;
 let lastFix: { lat: number; lng: number } | null = null;
 let lastFixAt = 0;
-let headingOrigin: { latitude: number; longitude: number } | null = null;
 let compassHeading: number | null = null;
 let fusedBearing: number | null = null;
 let lastSpeedKmh: number | null = null;
 let motionMagnitude = 0;
+const HEADING_BUFFER = 6;
+let headingSamples: number[] = [];
 
 function postToMain(message: LocationWorkerOutbound): void {
   ctx.postMessage(message);
@@ -43,6 +43,38 @@ function smoothBearing(previous: number | null, next: number, alpha: number): nu
   if (previous == null || !Number.isFinite(previous)) return ((next % 360) + 360) % 360;
   const blended = previous + shortestAngleDelta(previous, next) * alpha;
   return ((blended % 360) + 360) % 360;
+}
+
+function wrapDeg(value: number): number {
+  return ((value % 360) + 360) % 360;
+}
+
+function alignToTravel(reference: number | null, sample: number): number {
+  const wrapped = wrapDeg(sample);
+  if (reference == null || !Number.isFinite(reference)) return wrapped;
+  const delta = Math.abs(shortestAngleDelta(reference, wrapped));
+  if (delta < 140) return wrapped;
+  const flipped = wrapDeg(wrapped + 180);
+  return Math.abs(shortestAngleDelta(reference, flipped)) < delta ? flipped : reference;
+}
+
+function pushHeadingSample(sample: number): void {
+  headingSamples.push(wrapDeg(sample));
+  if (headingSamples.length > HEADING_BUFFER) headingSamples.shift();
+}
+
+/** 최근 헤딩에 더 무게를 둔 원형 가중 이동평균입니다. */
+function wmaHeading(): number | null {
+  if (headingSamples.length === 0) return null;
+  let x = 0;
+  let y = 0;
+  headingSamples.forEach((heading, index) => {
+    const weight = index + 1;
+    const rad = (heading * Math.PI) / 180;
+    x += Math.cos(rad) * weight;
+    y += Math.sin(rad) * weight;
+  });
+  return wrapDeg((Math.atan2(y, x) * 180) / Math.PI);
 }
 
 function interpolateAngle(a: number, b: number, bWeight: number): number {
@@ -121,25 +153,31 @@ function applyGpsSample(input: {
     elapsedMs
   );
 
-  if (!headingOrigin) headingOrigin = lastRaw
-    ? { latitude: lastRaw.lat, longitude: lastRaw.lng }
-    : raw;
-  const origin = headingOrigin;
-  const movedFromOrigin = origin ? haversineMeters(origin, raw) : 0;
-  let gpsBearing: number | null =
-    input.heading != null && Number.isFinite(input.heading) ? input.heading : null;
-  if (origin && movedFromOrigin >= Math.max(8, MIN_HEADING_MOVE_M)) {
-    gpsBearing = bearingDegrees(origin, raw);
-    headingOrigin = raw;
+  const HEADING_COURSE_MIN_M = 1.5;
+  const walking = lastSpeedKmh != null && lastSpeedKmh >= 1;
+  const movedM = prevFix
+    ? haversineMeters(prevFix, { latitude: next.lat, longitude: next.lng })
+    : 0;
+  let course: number | null = null;
+  if (prevFix && movedM >= HEADING_COURSE_MIN_M) {
+    course = bearingDegrees(prevFix, { latitude: next.lat, longitude: next.lng });
   }
 
-  if (compassHeading != null && gpsBearing != null) {
-    const gpsWeight = lastSpeedKmh != null ? Math.max(0, Math.min(0.75, lastSpeedKmh / 8)) : 0.25;
-    fusedBearing = interpolateAngle(compassHeading, gpsBearing, gpsWeight);
-  } else if (compassHeading != null) {
-    fusedBearing = smoothBearing(fusedBearing, compassHeading, 0.35);
-  } else if (gpsBearing != null) {
-    fusedBearing = smoothBearing(fusedBearing, gpsBearing, 0.45);
+  let sample = course;
+  if (sample == null && !walking && input.heading != null && Number.isFinite(input.heading)) {
+    sample = input.heading;
+  }
+
+  if (sample != null) {
+    const aligned = alignToTravel(fusedBearing ?? wmaHeading(), sample);
+    pushHeadingSample(aligned);
+    const wma = wmaHeading();
+    if (wma != null) fusedBearing = smoothBearing(fusedBearing, wma, 0.5);
+  } else if (!walking && compassHeading != null) {
+    fusedBearing =
+      fusedBearing == null
+        ? compassHeading
+        : interpolateAngle(fusedBearing, compassHeading, 0.18);
   }
 
   lastFix = next;
@@ -154,12 +192,12 @@ function resetSignalState(): void {
   lastRawAt = 0;
   lastFix = null;
   lastFixAt = 0;
-  headingOrigin = null;
   compassHeading = null;
   fusedBearing = null;
   lastSpeedKmh = null;
   lastAccuracy = 40;
   motionMagnitude = 0;
+  headingSamples = [];
 }
 
 ctx.onmessage = (event: MessageEvent<LocationWorkerInbound>) => {
@@ -192,8 +230,10 @@ ctx.onmessage = (event: MessageEvent<LocationWorkerInbound>) => {
     );
     if (heading == null) return;
     compassHeading = heading;
+    const walking = lastSpeedKmh != null && lastSpeedKmh >= 1;
+    if (walking) return;
     if (fusedBearing == null) fusedBearing = heading;
-    else fusedBearing = smoothBearing(fusedBearing, heading, 0.3);
+    else fusedBearing = smoothBearing(fusedBearing, heading, 0.18);
     emitLocation(false, false);
     return;
   }

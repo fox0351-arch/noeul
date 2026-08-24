@@ -7,6 +7,7 @@ import { MapManager } from '@/services/MapManager';
 import { useLocationStore, type FollowCameraDebug } from '@/store/useLocationStore';
 import { LocationSignalManager } from '@/workers/locationSignalManager';
 import { createMockTravelRoute, type SimReport } from '@/workers/location-mock';
+import { OFF_ROUTE_VOICE, speakOffRouteAlert } from '@/lib/navSafety';
 import { routePointsToLocations } from '@/types/route';
 
 type WindowSim = Window & { __NOEUL_SIM__?: SimReport };
@@ -62,8 +63,8 @@ function LocationSimPanelLive() {
     }
 
     const store = useLocationStore.getState();
-    store.setFollowMode(false);
-    store.setHeadingUp(false);
+    store.setFollowMode(true);
+    store.setHeadingUp(true);
 
     const signal = new LocationSignalManager();
     signal.start({
@@ -106,13 +107,28 @@ function LocationSimPanelLive() {
     <div className="flex flex-col h-dvh bg-slate-100">
       <header className="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-200 shrink-0">
         <p className="text-base font-black text-slate-900">위치 시뮬 · 계곡따라2</p>
-        <p className="text-sm font-bold text-slate-800">시속 4km · 루트 전체 보기</p>
+        <p className="text-sm font-bold text-slate-800">시속 4km · 헤딩 스무딩 · 따라가기</p>
         <button
           type="button"
           className="px-3 text-sm font-black text-white rounded-md min-h-10 bg-slate-900"
           onClick={() => setRunning((v) => !v)}
         >
           {running ? '시뮬 중지' : '시뮬 시작'}
+        </button>
+        <button
+          type="button"
+          className="px-3 text-sm font-black text-white rounded-md min-h-10 bg-rose-700"
+          onClick={() => {
+            const first = speakOffRouteAlert(OFF_ROUTE_VOICE[20]);
+            window.setTimeout(() => {
+              const second = speakOffRouteAlert(OFF_ROUTE_VOICE[20]);
+              const result = { first, second, expectSecondFalse: true };
+              (window as unknown as { __NOEUL_TTS_COOLDOWN__?: typeof result }).__NOEUL_TTS_COOLDOWN__ = result;
+              console.info('[노을-sim] off-route TTS cooldown', result);
+            }, 800);
+          }}
+        >
+          이탈 TTS 테스트
         </button>
         <Link href="/" className="px-3 text-sm font-bold underline min-h-10 inline-flex items-center">
           홈으로

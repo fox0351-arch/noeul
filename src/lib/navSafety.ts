@@ -48,6 +48,9 @@ function stopVoiceAudio(): void {
 }
 
 let activeVoiceStyle: VoiceStyle = 'female';
+let cachedVoices: SpeechSynthesisVoice[] = [];
+let lastOffRouteSpeechAt = 0;
+const OFF_ROUTE_SPEECH_COOLDOWN_MS = 10000;
 
 export function setActiveVoiceStyle(style: VoiceStyle): void {
   activeVoiceStyle = style;
@@ -56,8 +59,15 @@ export function setActiveVoiceStyle(style: VoiceStyle): void {
   }
 }
 
+function refreshVoiceCache(): SpeechSynthesisVoice[] {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return cachedVoices;
+  const list = window.speechSynthesis.getVoices();
+  if (list.length > 0) cachedVoices = Array.from(list);
+  return cachedVoices.length > 0 ? cachedVoices : list;
+}
+
 function koreanVoicePool(): SpeechSynthesisVoice[] {
-  const voices = window.speechSynthesis.getVoices();
+  const voices = refreshVoiceCache();
   const korean = voices.filter(
     (voice) => /^ko\b/i.test(voice.lang) || /한국|korean/i.test(`${voice.name} ${voice.lang}`)
   );
@@ -94,26 +104,44 @@ function pickVoiceForStyle(style: Exclude<VoiceStyle, 'mute'>): SpeechSynthesisV
 
 export function warmSpeechVoices(): void {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-  window.speechSynthesis.getVoices();
+  refreshVoiceCache();
   window.speechSynthesis.addEventListener('voiceschanged', () => {
-    window.speechSynthesis.getVoices();
+    refreshVoiceCache();
   });
 }
 
 function waitForVoices(): Promise<void> {
   return new Promise((resolve) => {
-    const voices = window.speechSynthesis.getVoices();
-    if (voices.length > 0) {
+    if (refreshVoiceCache().length > 0) {
       resolve();
       return;
     }
     const finish = () => {
       window.speechSynthesis.removeEventListener('voiceschanged', finish);
+      refreshVoiceCache();
       resolve();
     };
     window.speechSynthesis.addEventListener('voiceschanged', finish);
-    window.setTimeout(finish, 700);
+    window.setTimeout(finish, 2500);
   });
+}
+
+function bindUtteranceVoice(utterance: SpeechSynthesisUtterance): void {
+  utterance.lang = 'ko-KR';
+  const voice = activeVoiceStyle === 'mute' ? null : pickVoiceForStyle(activeVoiceStyle);
+  if (voice) {
+    utterance.voice = voice;
+    utterance.lang = voice.lang || 'ko-KR';
+  }
+  utterance.rate = 0.95;
+  utterance.volume = 1;
+  const label = `${voice?.name ?? ''} ${voice?.voiceURI ?? ''}`;
+  if (activeVoiceStyle === 'male') {
+    const femaleOnly = /heami|sunhi|yuna|nari|female|woman|여성/i.test(label);
+    utterance.pitch = !voice || femaleOnly ? 0.82 : 0.92;
+  } else {
+    utterance.pitch = 1.05;
+  }
 }
 
 export function speakKorean(text: string): void {
@@ -126,18 +154,28 @@ export function speakKorean(text: string): void {
       stopVoiceAudio();
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'ko-KR';
-      const voice = pickVoiceForStyle(activeVoiceStyle);
-      if (voice) {
-        utterance.voice = voice;
-      }
-      utterance.rate = 1;
-      utterance.volume = 1;
-      window.speechSynthesis.speak(utterance);
+      bindUtteranceVoice(utterance);
+      window.setTimeout(() => {
+        if (activeVoiceStyle === 'mute') return;
+        bindUtteranceVoice(utterance);
+        window.speechSynthesis.speak(utterance);
+      }, 80);
     } catch {
       // 음성 미지원 기기는 무시
     }
   });
+}
+
+export function speakOffRouteAlert(text: string): boolean {
+  const now = Date.now();
+  if (now - lastOffRouteSpeechAt < OFF_ROUTE_SPEECH_COOLDOWN_MS) return false;
+  lastOffRouteSpeechAt = now;
+  speakKorean(text);
+  return true;
+}
+
+export function resetOffRouteSpeechCooldown(): void {
+  lastOffRouteSpeechAt = 0;
 }
 
 let repeatingTimer: number | null = null;
@@ -153,11 +191,11 @@ export function stopRepeatingSpeech(): void {
   }
 }
 
-export function startRepeatingSpeech(text: string, intervalMs = 5000): void {
+export function startRepeatingSpeech(text: string, intervalMs = 10000): void {
   stopRepeatingSpeech();
-  speakKorean(text);
+  speakOffRouteAlert(text);
   repeatingTimer = window.setInterval(() => {
-    speakKorean(text);
+    speakOffRouteAlert(text);
   }, intervalMs);
 }
 

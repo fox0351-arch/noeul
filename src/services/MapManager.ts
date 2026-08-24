@@ -110,6 +110,7 @@ export class MapManager {
   private renderedLat: number | null = null;
   private renderedLng: number | null = null;
   private renderedHeading = 0;
+  private renderedMarkerHeading: number | null = null;
   private unsubscribeStore: (() => void) | null = null;
   private moveCameraCount = 0;
   private fitBoundsCount = 0;
@@ -418,6 +419,7 @@ export class MapManager {
           this.lastCameraAt = 0;
           this.renderedLat = null;
           this.renderedLng = null;
+          this.renderedMarkerHeading = null;
         }
         if (!slice.followMode && prev.followMode) {
           this.resetNorthUp();
@@ -472,7 +474,7 @@ export class MapManager {
     } else {
       this.renderedLat = lerp(this.renderedLat, target.lat, 0.35);
       this.renderedLng = lerp(this.renderedLng, target.lng, 0.35);
-      this.renderedHeading = lerpHeading(this.renderedHeading, heading, 0.35);
+      this.renderedHeading = lerpHeading(this.renderedHeading, heading, 0.22);
     }
 
     const moved = this.moveCameraOnce({
@@ -553,6 +555,7 @@ export class MapManager {
     this.renderedLat = null;
     this.renderedLng = null;
     this.renderedHeading = 0;
+    this.renderedMarkerHeading = null;
     useLocationStore.getState().setCameraDebug(null);
   }
 
@@ -587,7 +590,10 @@ export class MapManager {
     }
 
     if (bearing == null || !Number.isFinite(bearing)) return;
-    const arrowApplied = (((bearing + arrowOffset) % 360) + 360) % 360;
+    const target = (((bearing + arrowOffset) % 360) + 360) % 360;
+    if (this.renderedMarkerHeading == null) this.renderedMarkerHeading = target;
+    else this.renderedMarkerHeading = lerpHeading(this.renderedMarkerHeading, target, 0.28);
+    const arrowApplied = this.renderedMarkerHeading;
     if (!this.headingMarker) {
       this.headingMarker = new google.maps.Marker({
         position,

@@ -120,15 +120,17 @@ function sampleTick(elapsedMs: number): {
 } {
   const { location, bearing } = pointOnMockLoop((elapsedMs / 1000) * MOCK_WALK_MPS);
   const noisy = destinationPoint(location, Math.random() * 360, Math.abs(2.4 * randn()));
-  const compassShake = 28 * Math.sin(elapsedMs / 420) + 10 * randn();
+  const compassShake = 55 * Math.sin(elapsedMs / 380) + 22 * randn();
+  const gpsFlip = Math.random() < 0.12 ? 180 : 0;
+  const compassJerk = Math.random() < 0.08 ? 90 : 0;
   return {
     trueLat: location.latitude,
     trueLng: location.longitude,
     trueBearing: bearing,
     noisyLat: noisy.latitude,
     noisyLng: noisy.longitude,
-    noisyGpsHeading: wrapDeg(bearing + 6 * randn()),
-    noisyCompass: wrapDeg(bearing + compassShake),
+    noisyGpsHeading: wrapDeg(bearing + gpsFlip + 25 * randn()),
+    noisyCompass: wrapDeg(bearing + compassShake + compassJerk),
   };
 }
 

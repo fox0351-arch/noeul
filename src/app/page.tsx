@@ -28,6 +28,7 @@ import {
   shareOrCopy,
   setActiveVoiceStyle,
   speakKorean,
+  speakOffRouteAlert,
   startRepeatingSpeech,
   stopRepeatingSpeech,
   unlockAlertAudio,
@@ -391,9 +392,9 @@ export default function HomePage() {
         offRouteToastTimerRef.current = window.setTimeout(() => setOffRouteToast(''), 3000);
         vibrateAlert(nextLevel);
         if (nextLevel === 100) {
-          startRepeatingSpeech(OFF_ROUTE_VOICE[100], 5000);
+          startRepeatingSpeech(OFF_ROUTE_VOICE[100], 10000);
         } else {
-          speakKorean(OFF_ROUTE_VOICE[nextLevel]);
+          speakOffRouteAlert(OFF_ROUTE_VOICE[nextLevel]);
         }
       }
     };
