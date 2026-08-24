@@ -112,6 +112,7 @@ export class MapManager {
   private renderedHeading = 0;
   private unsubscribeStore: (() => void) | null = null;
   private moveCameraCount = 0;
+  private fitBoundsCount = 0;
 
   private constructor() {}
 
@@ -149,6 +150,10 @@ export class MapManager {
     this.setReturnPoint(this.returnPoint, this.returnUser);
     this.bindStore();
     this.startCameraLoop();
+    const stored = useLocationStore.getState();
+    if (stored.lat != null && stored.lng != null) {
+      this.moveCamera(stored.lat, stored.lng, 17);
+    }
   }
 
   detach(): void {
@@ -232,6 +237,51 @@ export class MapManager {
       strokeWeight: ROUTE_STROKE_WEIGHT,
       map,
       zIndex: 2,
+    });
+    if (!useLocationStore.getState().followMode) {
+      this.fitRouteBounds();
+    }
+  }
+
+  /** 따라가기가 꺼져 있을 때 현재 좌표로 지도를 옮깁니다. */
+  moveCamera(lat: number, lng: number, zoom = 17): void {
+    this.dragPauseUntil = 0;
+    this.lastCameraAt = 0;
+    this.renderedLat = lat;
+    this.renderedLng = lng;
+    this.moveCameraOnce({
+      lat,
+      lng,
+      heading: 0,
+      zoom,
+    });
+  }
+
+  /** 그린 루트 전체가 화면에 들어오게 맞춥니다. */
+  fitRouteBounds(): void {
+    const map = this.map;
+    if (!map || !window.google || this.routePoints.length < 2) return;
+    const bounds = new google.maps.LatLngBounds();
+    for (const point of this.routePoints) {
+      bounds.extend({ lat: point.latitude, lng: point.longitude });
+    }
+    map.fitBounds(bounds, 56);
+    this.fitBoundsCount += 1;
+    const debug = useLocationStore.getState().cameraDebug;
+    useLocationStore.getState().setCameraDebug({
+      followMode: debug?.followMode ?? false,
+      setCenterCount: debug?.setCenterCount ?? 0,
+      panToCount: debug?.panToCount ?? 0,
+      moveCameraCount: debug?.moveCameraCount ?? 0,
+      fitBoundsCount: this.fitBoundsCount,
+      lat: debug?.lat ?? this.routePoints[0].latitude,
+      lng: debug?.lng ?? this.routePoints[0].longitude,
+      mapCenterLat: debug?.mapCenterLat ?? null,
+      mapCenterLng: debug?.mapCenterLng ?? null,
+      centerDeltaM: debug?.centerDeltaM ?? null,
+      heading: debug?.heading ?? null,
+      arrowApplied: debug?.arrowApplied ?? null,
+      arrowOffset: debug?.arrowOffset ?? 0,
     });
   }
 
@@ -363,6 +413,7 @@ export class MapManager {
           this.trackPath = [];
           this.trackLine?.setPath([]);
           this.moveCameraCount = 0;
+          this.fitBoundsCount = 0;
           this.dragPauseUntil = 0;
           this.lastCameraAt = 0;
           this.renderedLat = null;
@@ -445,7 +496,7 @@ export class MapManager {
       setCenterCount: 0,
       panToCount: 0,
       moveCameraCount: this.moveCameraCount,
-      fitBoundsCount: 0,
+      fitBoundsCount: this.fitBoundsCount,
       lat: user.latitude,
       lng: user.longitude,
       mapCenterLat,

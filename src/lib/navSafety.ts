@@ -51,6 +51,9 @@ let activeVoiceStyle: VoiceStyle = 'female';
 
 export function setActiveVoiceStyle(style: VoiceStyle): void {
   activeVoiceStyle = style;
+  if (style === 'mute') {
+    stopRepeatingSpeech();
+  }
 }
 
 function koreanVoicePool(): SpeechSynthesisVoice[] {
@@ -97,23 +100,44 @@ export function warmSpeechVoices(): void {
   });
 }
 
+function waitForVoices(): Promise<void> {
+  return new Promise((resolve) => {
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length > 0) {
+      resolve();
+      return;
+    }
+    const finish = () => {
+      window.speechSynthesis.removeEventListener('voiceschanged', finish);
+      resolve();
+    };
+    window.speechSynthesis.addEventListener('voiceschanged', finish);
+    window.setTimeout(finish, 700);
+  });
+}
+
 export function speakKorean(text: string): void {
   if (typeof window === 'undefined') return;
   if (activeVoiceStyle === 'mute') return;
   if (!('speechSynthesis' in window)) return;
-  try {
-    stopVoiceAudio();
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'ko-KR';
-    const voice = pickVoiceForStyle(activeVoiceStyle);
-    if (voice) utterance.voice = voice;
-    utterance.rate = 1;
-    utterance.volume = 1;
-    window.speechSynthesis.speak(utterance);
-  } catch {
-    // 음성 미지원 기기는 무시
-  }
+  void waitForVoices().then(() => {
+    if (activeVoiceStyle === 'mute') return;
+    try {
+      stopVoiceAudio();
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'ko-KR';
+      const voice = pickVoiceForStyle(activeVoiceStyle);
+      if (voice) {
+        utterance.voice = voice;
+      }
+      utterance.rate = 1;
+      utterance.volume = 1;
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      // 음성 미지원 기기는 무시
+    }
+  });
 }
 
 let repeatingTimer: number | null = null;

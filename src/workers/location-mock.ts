@@ -1,14 +1,71 @@
-import { destinationPoint } from '@/lib/geo';
+import { destinationPoint, haversineMeters, bearingDegrees } from '@/lib/geo';
 import { PlaceLocation } from '@/types/place';
 import { TravelRoute } from '@/types/route';
 import type { LocationWorkerInbound } from './location-types';
 
+/** public/gyeokttara-2.gpx (계곡따라2) 트랙. 서울 기본 중심이 아닌 기장 계곡입니다. */
+export const GYEOKTTARA_2_POINTS: PlaceLocation[] = [
+  { latitude: 35.3218, longitude: 129.2184 },
+  { latitude: 35.3229, longitude: 129.2201 },
+  { latitude: 35.3242, longitude: 129.2219 },
+  { latitude: 35.3256, longitude: 129.2238 },
+  { latitude: 35.3271, longitude: 129.2257 },
+  { latitude: 35.3284, longitude: 129.2278 },
+  { latitude: 35.3297, longitude: 129.23 },
+  { latitude: 35.331, longitude: 129.2321 },
+  { latitude: 35.3324, longitude: 129.2344 },
+  { latitude: 35.3337, longitude: 129.2367 },
+  { latitude: 35.3349, longitude: 129.2391 },
+  { latitude: 35.336, longitude: 129.2416 },
+  { latitude: 35.3371, longitude: 129.2442 },
+  { latitude: 35.338, longitude: 129.2469 },
+  { latitude: 35.3388, longitude: 129.2497 },
+  { latitude: 35.3394, longitude: 129.2525 },
+  { latitude: 35.3399, longitude: 129.2554 },
+  { latitude: 35.3402, longitude: 129.2583 },
+];
+
 /** 시속 4km 보행 */
 export const MOCK_WALK_KMH = 4;
 const MOCK_WALK_MPS = MOCK_WALK_KMH / 3.6;
-const ORIGIN: PlaceLocation = { latitude: 37.5285, longitude: 126.9342 };
-const LOOP_EDGES_M = [180, 120, 180, 120];
-const LOOP_BEARINGS = [90, 0, 270, 180];
+
+function routeLengthM(points: PlaceLocation[]): number {
+  let sum = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    sum += haversineMeters(points[i], points[i + 1]);
+  }
+  return sum;
+}
+
+const ROUTE_LENGTH_M = routeLengthM(GYEOKTTARA_2_POINTS);
+
+export function pointOnGyeokttara2(distanceM: number): { location: PlaceLocation; bearing: number } {
+  const loop = Math.max(ROUTE_LENGTH_M, 1);
+  let remain = ((distanceM % loop) + loop) % loop;
+  for (let i = 0; i < GYEOKTTARA_2_POINTS.length - 1; i += 1) {
+    const start = GYEOKTTARA_2_POINTS[i];
+    const end = GYEOKTTARA_2_POINTS[i + 1];
+    const edge = haversineMeters(start, end);
+    const bearing = bearingDegrees(start, end);
+    if (remain <= edge || i === GYEOKTTARA_2_POINTS.length - 2) {
+      return { location: destinationPoint(start, bearing, Math.min(remain, edge)), bearing };
+    }
+    remain -= edge;
+  }
+  const last = GYEOKTTARA_2_POINTS[GYEOKTTARA_2_POINTS.length - 1];
+  const prev = GYEOKTTARA_2_POINTS[GYEOKTTARA_2_POINTS.length - 2];
+  return { location: last, bearing: bearingDegrees(prev, last) };
+}
+
+export function createMockTravelRoute(): TravelRoute {
+  return {
+    name: '계곡따라2',
+    sourceFileName: 'gyeokttara-2.gpx',
+    createdAt: new Date().toISOString(),
+    points: GYEOKTTARA_2_POINTS.map((p) => ({ latitude: p.latitude, longitude: p.longitude })),
+  };
+}
+
 
 export type SimHeapSample = {
   tSec: number;
@@ -46,38 +103,8 @@ function shortestDelta(from: number, to: number): number {
   return ((to - from + 540) % 360) - 180;
 }
 
-function loopLengthM(): number {
-  return LOOP_EDGES_M.reduce((sum, edge) => sum + edge, 0);
-}
-
 export function pointOnMockLoop(distanceM: number): { location: PlaceLocation; bearing: number } {
-  const loop = loopLengthM();
-  let remain = ((distanceM % loop) + loop) % loop;
-  let cursor = ORIGIN;
-  for (let i = 0; i < LOOP_EDGES_M.length; i += 1) {
-    const edge = LOOP_EDGES_M[i];
-    const bearing = LOOP_BEARINGS[i];
-    if (remain <= edge) {
-      return { location: destinationPoint(cursor, bearing, remain), bearing };
-    }
-    cursor = destinationPoint(cursor, bearing, edge);
-    remain -= edge;
-  }
-  return { location: ORIGIN, bearing: LOOP_BEARINGS[0] };
-}
-
-export function createMockTravelRoute(): TravelRoute {
-  const loop = loopLengthM();
-  const points: PlaceLocation[] = [];
-  for (let d = 0; d <= loop; d += 12) {
-    points.push(pointOnMockLoop(d).location);
-  }
-  return {
-    name: '가상 보행 루프 (4km/h)',
-    sourceFileName: 'mock-walk-loop',
-    createdAt: new Date().toISOString(),
-    points: points.map((p) => ({ latitude: p.latitude, longitude: p.longitude })),
-  };
+  return pointOnGyeokttara2(distanceM);
 }
 
 export { isLocationSimAllowed } from '@/lib/locationSimAccess';

@@ -45,6 +45,7 @@ import { loadUserSettings, saveUserSettings, type VoiceStyle } from '@/lib/userD
 import MapDomView, { ARROW_ROTATION_OFFSETS } from '@/components/MapDomView';
 import SimQueryRedirect from '@/components/SimQueryRedirect';
 import { useLocationStore } from '@/store/useLocationStore';
+import { MapManager } from '@/services/MapManager';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
 
 function formatMapDate(iso: string): string {
@@ -119,6 +120,8 @@ export default function HomePage() {
   const [recenterRequestId, setRecenterRequestId] = useState(0);
   const [locateToast, setLocateToast] = useState('');
   const [isLocating, setIsLocating] = useState(false);
+  const [locationDenied, setLocationDenied] = useState(false);
+  const [locationDialogDismissed, setLocationDialogDismissed] = useState(false);
   const [returnPoint, setReturnPoint] = useState<PlaceLocation | null>(null);
   const [returnToast, setReturnToast] = useState('');
   const [offRouteToast, setOffRouteToast] = useState('');
@@ -136,7 +139,9 @@ export default function HomePage() {
   const lastGoodHeadingRef = useRef<number | null>(null);
   const lastRawGpsRef = useRef<PlaceLocation | null>(null);
   const currentRouteRef = useRef(currentRoute);
-  currentRouteRef.current = currentRoute;
+  const isFollowModeRef = useRef(isFollowMode);
+  const didCenterOnGpsRef = useRef(false);
+  const applyImportedTrailFileRef = useRef<(file: File) => Promise<void>>(async () => {});
   const [arrowRotationOffset, setArrowRotationOffset] = useState(0);
   const { installed, hint: installHint, install: installApp } = usePwaInstall();
 
@@ -179,6 +184,12 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    currentRouteRef.current = currentRoute;
+    isFollowModeRef.current = isFollowMode;
+  }, [currentRoute, isFollowMode]);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- 기기 저장값을 첫 화면에 올립니다 */
+  useEffect(() => {
     setManualPlaces(loadManualPlaces());
     setHasLoadedManualPlaces(true);
     setTravelMaps(loadTravelMaps());
@@ -202,6 +213,17 @@ export default function HomePage() {
     const lastFix = loadLastGps();
     if (lastFix) {
       lastFixRef.current = { latitude: lastFix.latitude, longitude: lastFix.longitude };
+      setUserLocation({ latitude: lastFix.latitude, longitude: lastFix.longitude });
+      setCenter({ latitude: lastFix.latitude, longitude: lastFix.longitude });
+      useLocationStore.getState().applyFix({
+        lat: lastFix.latitude,
+        lng: lastFix.longitude,
+        bearing: lastFix.heading,
+        accuracy: lastFix.accuracyM,
+        speedKmh: null,
+        timestamp: Date.now(),
+        fromGps: true,
+      });
     }
 
     const session = loadActiveRouteSession();
@@ -216,6 +238,9 @@ export default function HomePage() {
       } else if (session.route.points[0]) {
         setCenter(session.route.points[0]);
       }
+      if ((session.route.points.length ?? 0) >= 2) {
+        window.setTimeout(() => MapManager.getInstance().fitRouteBounds(), 0);
+      }
     }
     setNavSessionReady(true);
 
@@ -228,6 +253,7 @@ export default function HomePage() {
       window.removeEventListener('offline', onOffline);
     };
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     return subscribeBattery((status) => {
@@ -268,7 +294,9 @@ export default function HomePage() {
       saveManualPlaces(manualPlaces);
     } catch (error) {
       if (isQuotaExceeded(error)) {
-        setMapError('사진 용량이 커서 기기에 저장하지 못했습니다. 사진을 줄여 주세요.');
+        queueMicrotask(() => {
+          setMapError('사진 용량이 커서 기기에 저장하지 못했습니다. 사진을 줄여 주세요.');
+        });
       }
     }
   }, [manualPlaces, hasLoadedManualPlaces]);
@@ -287,6 +315,7 @@ export default function HomePage() {
     saveActiveRouteSession(null);
   }, [navSessionReady, currentRoute, displayedPlaces, mapTitle, currentQuery]);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- 장소 수에 맞춰 목록 접힘만 맞춥니다 */
   useEffect(() => {
     if (placeListToggledByUser) return;
     const isMobile = window.matchMedia('(max-width: 767px)').matches;
@@ -296,6 +325,7 @@ export default function HomePage() {
     }
     setIsPlaceListCollapsed(displayedPlaces.length >= 15);
   }, [displayedPlaces.length, placeListToggledByUser]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (!shouldScrollToPlaceList.current) return;
@@ -305,17 +335,18 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!isFollowMode) {
-      setOffRouteLevel(0);
+      queueMicrotask(() => {
+        setOffRouteLevel(0);
+        setReturnPoint(null);
+      });
       offRouteLevelRef.current = 0;
-      setReturnPoint(null);
       stopRepeatingSpeech();
-      return;
     }
 
     let cancelled = false;
     const intervalMs = batterySave ? 10000 : 800;
     let offRouteSince = 0;
-    console.info('[노을-follow] watch start', { isFollowMode: true, intervalMs });
+    console.info('[노을-gps] watch start', { intervalMs, follow: isFollowModeRef.current });
 
     const applyOffRoute = (distance: number, loc: PlaceLocation, routeLocations: PlaceLocation[]) => {
       if (distance < OFF_ROUTE_THRESHOLD_M) {
@@ -368,10 +399,22 @@ export default function HomePage() {
     };
 
     if (!navigator.geolocation) {
-      setMapError('이 기기에서는 위치를 쓸 수 없습니다. 위치 기능이 있는 휴대폰 브라우저를 사용해 주세요.');
-      setIsFollowMode(false);
+      queueMicrotask(() => {
+        setLocationDenied(true);
+        setMapError('이 기기에서는 위치를 쓸 수 없습니다. 위치 기능이 있는 휴대폰 브라우저를 사용해 주세요.');
+      });
       return;
     }
+
+    void LocationSignalManager.requestSensorPermissions();
+    void navigator.permissions
+      ?.query({ name: 'geolocation' })
+      .then((status) => {
+        if (cancelled) return;
+        setLocationDenied(status.state === 'denied');
+        status.onchange = () => setLocationDenied(status.state === 'denied');
+      })
+      .catch(() => {});
 
     const signal = new LocationSignalManager();
     signal.start({
@@ -388,6 +431,7 @@ export default function HomePage() {
 
         setGpsAccuracyM(accuracy);
         lastRawGpsRef.current = next;
+        setLocationDenied(false);
 
         if (fix.speedKmh != null) {
           if (fix.speedKmh >= MIN_MAP_ROTATE_KMH) mapRotatingRef.current = true;
@@ -417,6 +461,12 @@ export default function HomePage() {
 
         if (!fix.fromGps) return;
 
+        if (!didCenterOnGpsRef.current) {
+          didCenterOnGpsRef.current = true;
+          setCenter(next);
+          MapManager.getInstance().moveCamera(next.latitude, next.longitude, 17);
+        }
+
         saveLastGps({
           latitude: next.latitude,
           longitude: next.longitude,
@@ -425,6 +475,7 @@ export default function HomePage() {
           savedAt: new Date().toISOString(),
         });
 
+        if (!isFollowModeRef.current) return;
         const route = currentRouteRef.current;
         if (!route || route.points.length < 2) return;
         const routeLocations = routePointsToLocations(route.points);
@@ -434,8 +485,9 @@ export default function HomePage() {
       onError: (err) => {
         if (cancelled) return;
         if (err.code === 1) {
-          setMapError('위치 권한이 꺼져 있습니다. 브라우저 설정에서 위치를 허용한 뒤 다시 따라가기를 눌러 주세요.');
-          setIsFollowMode(false);
+          setLocationDenied(true);
+          setMapError('위치 권한이 꺼져 있습니다. 아래 안내에서 위치를 허용해 주세요.');
+          if (isFollowModeRef.current) setIsFollowMode(false);
           return;
         }
         if (err.code === 3) {
@@ -450,9 +502,38 @@ export default function HomePage() {
       cancelled = true;
       signal.stop();
       stopRepeatingSpeech();
-      console.info('[노을-follow] watch stop');
+      console.info('[노을-gps] watch stop');
     };
-  }, [isFollowMode, batterySave]);
+    // GPS는 따라가기와 무관하게 켜 둡니다. 이탈 판정만 isFollowModeRef를 봅니다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batterySave]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('shared') !== 'gpx') return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cache = await caches.open('noeul-share-target');
+        const res = await cache.match('/__shared_file__');
+        if (!res || cancelled) return;
+        const blob = await res.blob();
+        const rawName = res.headers.get('X-Filename');
+        const name = rawName ? decodeURIComponent(rawName) : 'shared.gpx';
+        await cache.delete('/__shared_file__');
+        const file = new File([blob], name, { type: blob.type || 'application/gpx+xml' });
+        await applyImportedTrailFileRef.current(file);
+        window.history.replaceState({}, '', '/');
+      } catch (error) {
+        console.error('[노을-gpx] share target failed', error);
+        setMapError('공유된 GPX 파일을 열지 못했습니다. 앱에서 루트 가져오기를 사용해 주세요.');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const store = useLocationStore.getState();
@@ -463,6 +544,7 @@ export default function HomePage() {
     store.setArrowRotationOffset(arrowRotationOffset);
   }, [isFollowMode, headingUpMode, mapHeadingDeg, recenterRequestId, arrowRotationOffset]);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- 선택한 장소 설명을 불러옵니다 */
   useEffect(() => {
     if (!selectedPlaceId) {
       setPlaceDetails(null);
@@ -494,8 +576,9 @@ export default function HomePage() {
       .then((data) => {
         if (!cancelled) setPlaceDetails(data);
       })
-      .catch((err: any) => {
-        if (!cancelled) setDetailsError(err.message || '상세 정보를 불러올 수 없습니다.');
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : '상세 정보를 불러올 수 없습니다.';
+        if (!cancelled) setDetailsError(message);
       })
       .finally(() => {
         if (!cancelled) setIsDetailsLoading(false);
@@ -505,6 +588,7 @@ export default function HomePage() {
       cancelled = true;
     };
   }, [selectedPlaceId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleTogglePlaceList = () => {
     if (!window.matchMedia('(max-width: 767px)').matches) return;
@@ -549,8 +633,8 @@ export default function HomePage() {
         setPlaceListToggledByUser(true);
         shouldScrollToPlaceList.current = true;
       }
-    } catch (err: any) {
-      setErrorMsg(err.message || '검색 도중 오류가 발생했습니다.');
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : '검색 도중 오류가 발생했습니다.');
     } finally {
       setIsLoading(false);
     }
@@ -599,8 +683,8 @@ export default function HomePage() {
       setSelectedPlaceId(manualPlace.id);
       setAddKeyword('');
       setAddSuccessMsg(`'${manualPlace.name}'을(를) 내 장소에 저장했습니다.`);
-    } catch (err: any) {
-      setAddErrorMsg(err.message || '장소 추가 도중 오류가 발생했습니다.');
+    } catch (err: unknown) {
+      setAddErrorMsg(err instanceof Error ? err.message : '장소 추가 도중 오류가 발생했습니다.');
     } finally {
       setIsAdding(false);
     }
@@ -742,15 +826,15 @@ export default function HomePage() {
     routeFileInputRef.current?.click();
   };
 
-  const handleImportRouteFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-
+  const applyImportedTrailFile = async (file: File) => {
     setMapError('');
     setMapNotice('');
     try {
       const parsed = await parseTrailFile(file);
+      if (parsed.route.points.length < 2) {
+        setMapError('파일에서 걸을 수 있는 경로를 찾지 못했습니다.');
+        return;
+      }
       setCurrentRoute(parsed.route);
       setPlaces(parsed.places);
       setHideManualExtras(true);
@@ -763,6 +847,7 @@ export default function HomePage() {
       if (first) setCenter(first);
       setIsFollowMode(false);
       setMapNotice(`'${parsed.route.name}' 루트를 지도에 표시했습니다. 여행지도 저장으로 함께 보관하세요.`);
+      window.setTimeout(() => MapManager.getInstance().fitRouteBounds(), 0);
       if (loadedMapId) {
         const updated = updateTravelMap(loadedMapId, {
           title: mapTitle.trim() || parsed.route.name,
@@ -775,9 +860,20 @@ export default function HomePage() {
         if (updated) setTravelMaps(updated);
       }
     } catch (err: unknown) {
+      console.error('[노을-gpx] import failed', file.name, err);
       const message = err instanceof Error ? err.message : '루트 파일을 읽지 못했습니다.';
       setMapError(message);
     }
+  };
+  useEffect(() => {
+    applyImportedTrailFileRef.current = applyImportedTrailFile;
+  });
+
+  const handleImportRouteFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    await applyImportedTrailFile(file);
   };
 
   const handleToggleFollowRoute = () => {
@@ -912,6 +1008,13 @@ export default function HomePage() {
       return;
     }
 
+    const known = lastFixRef.current ?? userLocation;
+    if (known) {
+      setCenter(known);
+      MapManager.getInstance().moveCamera(known.latitude, known.longitude, 17);
+      setRecenterRequestId((id) => id + 1);
+    }
+
     setIsLocating(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -932,6 +1035,8 @@ export default function HomePage() {
         }
         lastFixRef.current = next;
         setUserLocation(next);
+        setCenter(next);
+        setLocationDenied(false);
         setHeadingDeg(heading);
         setGpsAccuracyM(Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null);
         saveLastGps({
@@ -941,6 +1046,16 @@ export default function HomePage() {
           heading,
           savedAt: new Date().toISOString(),
         });
+        useLocationStore.getState().applyFix({
+          lat: next.latitude,
+          lng: next.longitude,
+          bearing: heading,
+          accuracy: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null,
+          speedKmh: null,
+          timestamp: pos.timestamp,
+          fromGps: true,
+        });
+        MapManager.getInstance().moveCamera(next.latitude, next.longitude, 17);
         setRecenterRequestId((id) => id + 1);
         vibrateOnce();
         setLocateToast('현재 위치로 이동했습니다.');
@@ -950,6 +1065,7 @@ export default function HomePage() {
       (err) => {
         setIsLocating(false);
         if (err.code === err.PERMISSION_DENIED) {
+          setLocationDenied(true);
           setMapError('위치 권한이 꺼져 있습니다. 설정에서 위치를 허용한 뒤 다시 눌러 주세요.');
           return;
         }
@@ -1072,11 +1188,15 @@ export default function HomePage() {
       setCenter(map.route.points[0]);
     }
     setMapError('');
+    const routeReady = (map.route?.points.length ?? 0) >= 2;
     setMapNotice(
-      map.route
+      routeReady
         ? `'${map.title}' 여행지도와 루트를 불러왔습니다.`
         : `'${map.title}' 여행지도를 불러왔습니다.`
     );
+    if (routeReady) {
+      window.setTimeout(() => MapManager.getInstance().fitRouteBounds(), 0);
+    }
   };
 
   const handleBackupTravelMaps = () => {
@@ -1294,6 +1414,41 @@ export default function HomePage() {
   return (
     <main className={`flex flex-col h-dvh bg-slate-50 ${isFollowMode ? 'hiking-mode' : ''}`}>
       <SimQueryRedirect />
+      {(locationDenied || (!locationDialogDismissed && !userLocation)) && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="location-permission-title"
+          className="fixed inset-0 z-[96] flex items-end justify-center p-4 sm:items-center bg-black/55"
+        >
+          <div className="w-full max-w-md p-5 bg-white rounded-2xl shadow-xl">
+            <p id="location-permission-title" className="text-2xl font-black text-slate-900">
+              내 위치가 필요합니다
+            </p>
+            <p className="mt-3 text-lg font-bold leading-relaxed text-slate-800">
+              {locationDenied
+                ? '위치 권한이 꺼져 있습니다. 브라우저 또는 앱 설정에서 위치를 허용한 뒤 아래 버튼을 눌러 주세요.'
+                : '지도를 현재 위치로 옮기려면 위치 권한을 허용해 주세요. (홈 화면에 설치한 앱에서도 동일합니다.)'}
+            </p>
+            <button
+              type="button"
+              onClick={handleLocateMe}
+              className="w-full mt-5 text-xl font-black text-white rounded-xl min-h-14 bg-blue-700"
+            >
+              내 위치 허용하기
+            </button>
+            {!locationDenied && (
+              <button
+                type="button"
+                onClick={() => setLocationDialogDismissed(true)}
+                className="w-full mt-2 text-lg font-bold text-slate-700 rounded-xl min-h-12 bg-slate-100"
+              >
+                나중에
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <header className="flex items-center justify-between gap-2 px-3 py-2 bg-white border-b shrink-0 md:px-6 md:py-3 border-slate-200">
         <div className="flex items-center min-w-0 gap-2">
           <span className="text-xl font-black text-amber-600">노을</span>
@@ -1450,7 +1605,7 @@ export default function HomePage() {
                 </span>
               </span>
               {currentQuery && (
-                <span className="text-xs shrink-0 text-slate-500">'{currentQuery}' 기준</span>
+                <span className="text-xs shrink-0 text-slate-500">&apos;{currentQuery}&apos; 기준</span>
               )}
             </button>
 
@@ -1571,6 +1726,8 @@ export default function HomePage() {
                         <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
                           {place.photos?.map((photo) => (
                             <div key={photo.id} className="relative shrink-0">
+                              {/* 첨부 사진은 data URL이라 next/image 최적화 대상이 아닙니다. */}
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={photo.dataUrl}
                                 alt={`${place.name} 첨부 사진`}
@@ -1718,6 +1875,8 @@ export default function HomePage() {
                     if (style !== 'mute') {
                       warmSpeechVoices();
                       speakKorean(VOICE_PREVIEW[style]);
+                    } else {
+                      stopRepeatingSpeech();
                     }
                   }}
                   className={`px-2 text-base font-black rounded-lg min-h-12 border-2 ${

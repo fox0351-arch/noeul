@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import MapDomView from '@/components/MapDomView';
+import { MapManager } from '@/services/MapManager';
 import { useLocationStore, type FollowCameraDebug } from '@/store/useLocationStore';
 import { LocationSignalManager } from '@/workers/locationSignalManager';
 import { createMockTravelRoute, type SimReport } from '@/workers/location-mock';
@@ -13,7 +14,7 @@ type WindowSim = Window & { __NOEUL_SIM__?: SimReport };
 export default function LocationSimPanel() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
-    setMounted(true);
+    queueMicrotask(() => setMounted(true));
   }, []);
 
   if (!mounted) {
@@ -30,12 +31,29 @@ export default function LocationSimPanel() {
 function LocationSimPanelLive() {
   const route = useMemo(() => createMockTravelRoute(), []);
   const routePoints = useMemo(() => routePointsToLocations(route.points), [route]);
-  const center = routePoints[0] ?? { latitude: 37.5285, longitude: 126.9342 };
+  const center = routePoints[0] ?? { latitude: 35.3218, longitude: 129.2184 };
   const [running, setRunning] = useState(true);
   const [gpsCount, setGpsCount] = useState(0);
   const [userLocation, setUserLocation] = useState(center);
   const [report, setReport] = useState<SimReport | null>(null);
   const cameraDebug = useLocationStore((s) => s.cameraDebug);
+
+  useEffect(() => {
+    const first = routePoints[0];
+    if (!first) return;
+    useLocationStore.getState().applyFix({
+      lat: first.latitude,
+      lng: first.longitude,
+      bearing: 45,
+      accuracy: 8,
+      speedKmh: 4,
+      timestamp: Date.now(),
+      fromGps: true,
+    });
+    const tryFit = () => MapManager.getInstance().fitRouteBounds();
+    const timers = [400, 1200, 2500].map((ms) => window.setTimeout(tryFit, ms));
+    return () => timers.forEach((id) => window.clearTimeout(id));
+  }, [routePoints]);
 
   useEffect(() => {
     if (!running) {
@@ -44,9 +62,8 @@ function LocationSimPanelLive() {
     }
 
     const store = useLocationStore.getState();
-    store.setFollowMode(true);
-    store.setHeadingUp(true);
-    store.bumpRecenter();
+    store.setFollowMode(false);
+    store.setHeadingUp(false);
 
     const signal = new LocationSignalManager();
     signal.start({
@@ -88,8 +105,8 @@ function LocationSimPanelLive() {
   return (
     <div className="flex flex-col h-dvh bg-slate-100">
       <header className="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-200 shrink-0">
-        <p className="text-base font-black text-slate-900">위치 시뮬 테스트</p>
-        <p className="text-sm font-bold text-slate-800">시속 4km · 나침반 흔들림</p>
+        <p className="text-base font-black text-slate-900">위치 시뮬 · 계곡따라2</p>
+        <p className="text-sm font-bold text-slate-800">시속 4km · 루트 전체 보기</p>
         <button
           type="button"
           className="px-3 text-sm font-black text-white rounded-md min-h-10 bg-slate-900"

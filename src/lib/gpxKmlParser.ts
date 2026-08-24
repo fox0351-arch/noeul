@@ -209,23 +209,28 @@ function parseKml(doc: Document, fileName: string): ParsedTrailFile {
 }
 
 export async function parseTrailFile(file: File): Promise<ParsedTrailFile> {
-  const lower = file.name.toLowerCase();
-  if (!lower.endsWith('.gpx') && !lower.endsWith('.kml')) {
-    throw new Error('GPX 또는 KML 파일만 가져올 수 있습니다.');
-  }
-
-  const text = await file.text();
-  const doc = new DOMParser().parseFromString(text, 'text/xml');
-  const parseError = doc.querySelector('parsererror');
-  if (parseError) {
-    throw new Error('파일을 읽지 못했습니다. 다른 GPX/KML을 선택해 주세요.');
-  }
-
-  if (lower.endsWith('.gpx') || collectByLocalName(doc, 'gpx').length > 0) {
-    if (collectByLocalName(doc, 'gpx').length > 0 || collectByLocalName(doc, 'trkpt').length > 0) {
-      return parseGpx(doc, file.name);
+  try {
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith('.gpx') && !lower.endsWith('.kml')) {
+      throw new Error('GPX 또는 KML 파일만 가져올 수 있습니다.');
     }
-  }
 
-  return parseKml(doc, file.name);
+    const text = await file.text();
+    const doc = new DOMParser().parseFromString(text, 'text/xml');
+    const parseError = doc.querySelector('parsererror');
+    if (parseError) {
+      throw new Error('파일을 읽지 못했습니다. 다른 GPX/KML을 선택해 주세요.');
+    }
+
+    if (lower.endsWith('.gpx') || collectByLocalName(doc, 'gpx').length > 0) {
+      if (collectByLocalName(doc, 'gpx').length > 0 || collectByLocalName(doc, 'trkpt').length > 0) {
+        return parseGpx(doc, file.name);
+      }
+    }
+
+    return parseKml(doc, file.name);
+  } catch (error) {
+    console.error('[노을-gpx] parse failed', file.name, error);
+    throw error instanceof Error ? error : new Error('루트 파일을 읽지 못했습니다.');
+  }
 }

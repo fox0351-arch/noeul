@@ -87,12 +87,12 @@ create<LocationState>()(subscribeWithSelector((set) => ({ ... })))
 
 | 파일 | 역할 |
 |------|------|
-| `src/workers/location-mock.ts` | 여의도 인근 4km/h 루프, GPS·나침반 노이즈, `window.__NOEUL_SIM__` 리포트 |
+| `src/workers/location-mock.ts` | 개발 전용. `public/gyeokttara-2.gpx`(계곡따라2)를 시속 4km로 따라감. GPS·나침반 노이즈, `window.__NOEUL_SIM__` 리포트 |
 | `src/lib/locationSimAccess.ts` | 시뮬 허용 여부 |
 | `src/app/admin/test/location-sim/page.tsx` | 허용 시에만 패널 로드 |
 | `src/app/admin/test/location-sim/LocationSimPanel.tsx` | 지도 + 지표 막대 |
 
-`LocationSignalManager.start({ useMock: true })`는 허용될 때만 가상 펌프를 켭니다. 홈은 `useMock`을 쓰지 않습니다. 예전 `/?sim=1`은 `/admin/test/location-sim`으로 보냅니다.
+`LocationSignalManager.start({ useMock: true })`는 허용될 때만 가상 펌프를 켭니다. **홈(`/`)은 `useMock`을 쓰지 않고, 계곡따라2도 미리 올리지 않습니다.** 예전 `/?sim=1`은 `/admin/test/location-sim`으로 보냅니다.
 
 ### 켜고 끄기 (`NEXT_PUBLIC_ENABLE_LOCATION_SIM`)
 
@@ -108,9 +108,10 @@ create<LocationState>()(subscribeWithSelector((set) => ({ ... })))
 
 ## 7. PWA 서비스 워커와 화면 유지
 
-- `public/sw.js` 캐시 이름 `noeul-walk-v3`. 홈(`/`)만 탐색 결과로 캐시합니다. `/admin`은 캐시하지 않습니다.
+- `public/sw.js` 캐시 이름 `noeul-walk-v4`. 홈(`/`)만 탐색 결과로 캐시합니다. `/admin`은 캐시하지 않습니다.
 - Wake Lock은 서비스 워커가 아니라 `WakeLockProvider`(화면이 보일 때 `navigator.wakeLock`)가 유지합니다. 탭이 가려지면 OS가 잠금을 풀고, 다시 보이면 재요청합니다.
 - 등록 시 `updateViaCache: 'none'`으로 오래된 `sw.js`를 쓰지 않습니다.
+- **Web Share Target (GPX):** `public/manifest.json`의 `share_target`로 `.gpx`/`.kml` 파일 공유를 받습니다. 설치된 Chromium PWA(주로 Android Chrome)에서만 안정적으로 동작합니다. iOS Safari·데스크톱 대부분 브라우저는 Share Target을 지원하지 않으므로, **앱 안 「루트 가져오기」가 기본 가져오기 방법**입니다. 공유가 오면 SW가 `POST /share-target`을 가로채 캐시에 저장한 뒤 `/?shared=gpx`로 보냅니다.
 
 ## 8. 새 기능을 넣을 때
 

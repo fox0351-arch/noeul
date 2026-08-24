@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="noeul-sim">
+  <metadata>
+    <name>계곡따라2</name>
+  </metadata>
+  <trk>
+    <name>계곡따라2</name>
+    <trkseg>
+      <trkpt lat="35.32180" lon="129.21840"></trkpt>
+      <trkpt lat="35.32290" lon="129.22010"></trkpt>
+      <trkpt lat="35.32420" lon="129.22190"></trkpt>
+      <trkpt lat="35.32560" lon="129.22380"></trkpt>
+      <trkpt lat="35.32710" lon="129.22570"></trkpt>
+      <trkpt lat="35.32840" lon="129.22780"></trkpt>
+      <trkpt lat="35.32970" lon="129.23000"></trkpt>
+      <trkpt lat="35.33100" lon="129.23210"></trkpt>
+      <trkpt lat="35.33240" lon="129.23440"></trkpt>
+      <trkpt lat="35.33370" lon="129.23670"></trkpt>
+      <trkpt lat="35.33490" lon="129.23910"></trkpt>
+      <trkpt lat="35.33600" lon="129.24160"></trkpt>
+      <trkpt lat="35.33710" lon="129.24420"></trkpt>
+      <trkpt lat="35.33800" lon="129.24690"></trkpt>
+      <trkpt lat="35.33880" lon="129.24970"></trkpt>
+      <trkpt lat="35.33940" lon="129.25250"></trkpt>
+      <trkpt lat="35.33990" lon="129.25540"></trkpt>
+      <trkpt lat="35.34020" lon="129.25830"></trkpt>
+    </trkseg>
+  </trk>
+  <wpt lat="35.32180" lon="129.21840"><name>계곡 들머리</name></wpt>
+  <wpt lat="35.34020" lon="129.25830"><name>계곡 하류</name></wpt>
+</gpx>
