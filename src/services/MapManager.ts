@@ -134,7 +134,11 @@ export class MapManager {
       mapTypeControl: false,
       streetViewControl: false,
       fullscreenControl: true,
+      fullscreenControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
       rotateControl: true,
+      rotateControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
+      zoomControl: true,
+      zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM },
       gestureHandling: 'greedy',
     };
     const vector = google.maps.RenderingType?.VECTOR;
@@ -459,7 +463,7 @@ export class MapManager {
     if (Date.now() < this.dragPauseUntil) return;
 
     const user: PlaceLocation = { latitude: state.lat, longitude: state.lng };
-    const headingSource = state.headingUp ? (state.mapHeadingDeg ?? state.bearing) : 0;
+    const headingSource = state.headingUp ? (state.bearing ?? state.mapHeadingDeg) : 0;
     const heading =
       headingSource != null && Number.isFinite(headingSource) ? headingSource : 0;
     const mapH = map.getDiv()?.clientHeight || 640;
@@ -474,7 +478,7 @@ export class MapManager {
     } else {
       this.renderedLat = lerp(this.renderedLat, target.lat, 0.35);
       this.renderedLng = lerp(this.renderedLng, target.lng, 0.35);
-      this.renderedHeading = lerpHeading(this.renderedHeading, heading, 0.22);
+      this.renderedHeading = lerpHeading(this.renderedHeading, heading, 0.14);
     }
 
     const moved = this.moveCameraOnce({
@@ -590,9 +594,13 @@ export class MapManager {
     }
 
     if (bearing == null || !Number.isFinite(bearing)) return;
-    const target = (((bearing + arrowOffset) % 360) + 360) % 360;
+    const headingUp = useLocationStore.getState().headingUp;
+    // 헤딩업 VECTOR 지도에서 심볼을 지리 방위로 돌리면 카메라 헤딩과 겹쳐 뒤로/옆으로 갑니다.
+    const target = headingUp
+      ? (((arrowOffset % 360) + 360) % 360)
+      : (((bearing + arrowOffset) % 360) + 360) % 360;
     if (this.renderedMarkerHeading == null) this.renderedMarkerHeading = target;
-    else this.renderedMarkerHeading = lerpHeading(this.renderedMarkerHeading, target, 0.28);
+    else this.renderedMarkerHeading = lerpHeading(this.renderedMarkerHeading, target, 0.16);
     const arrowApplied = this.renderedMarkerHeading;
     if (!this.headingMarker) {
       this.headingMarker = new google.maps.Marker({

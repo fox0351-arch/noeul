@@ -86,7 +86,7 @@ function pickVoiceForStyle(style: Exclude<VoiceStyle, 'mute'>): SpeechSynthesisV
 
   if (style === 'male') {
     return (
-      byName(/injoon|hyunsu|jinho|wavenet-c|wavenet-d|standard-c|standard-d|남성|male|man|minho/i) ??
+      byName(/injoon|hyunsu|jinho|minho|wavenet-[cd]|standard-[cd]|neural2-[cd]|남성|남자|\bmale\b/i) ??
       local.find((voice) => !/female|woman|여성|nari|sunhi|heami|yuna/i.test(voice.name)) ??
       voices.find((voice) => !/female|woman|여성|nari|sunhi|heami|yuna/i.test(voice.name)) ??
       voices[0]
@@ -104,10 +104,14 @@ function pickVoiceForStyle(style: Exclude<VoiceStyle, 'mute'>): SpeechSynthesisV
 
 export function warmSpeechVoices(): void {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-  refreshVoiceCache();
-  window.speechSynthesis.addEventListener('voiceschanged', () => {
+  const synth = window.speechSynthesis;
+  const pull = () => {
     refreshVoiceCache();
-  });
+  };
+  pull();
+  synth.getVoices();
+  synth.onvoiceschanged = pull;
+  synth.addEventListener('voiceschanged', pull);
 }
 
 function waitForVoices(): Promise<void> {
@@ -116,19 +120,29 @@ function waitForVoices(): Promise<void> {
       resolve();
       return;
     }
+    const synth = window.speechSynthesis;
     const finish = () => {
-      window.speechSynthesis.removeEventListener('voiceschanged', finish);
+      synth.removeEventListener('voiceschanged', finish);
+      if (synth.onvoiceschanged === finish) synth.onvoiceschanged = null;
       refreshVoiceCache();
       resolve();
     };
-    window.speechSynthesis.addEventListener('voiceschanged', finish);
-    window.setTimeout(finish, 2500);
+    synth.onvoiceschanged = finish;
+    synth.addEventListener('voiceschanged', finish);
+    synth.getVoices();
+    window.setTimeout(finish, 4000);
   });
+}
+
+function liveVoiceByUri(uri: string | undefined): SpeechSynthesisVoice | null {
+  if (!uri || typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
+  return window.speechSynthesis.getVoices().find((voice) => voice.voiceURI === uri) ?? null;
 }
 
 function bindUtteranceVoice(utterance: SpeechSynthesisUtterance): void {
   utterance.lang = 'ko-KR';
-  const voice = activeVoiceStyle === 'mute' ? null : pickVoiceForStyle(activeVoiceStyle);
+  const picked = activeVoiceStyle === 'mute' ? null : pickVoiceForStyle(activeVoiceStyle);
+  const voice = picked ? liveVoiceByUri(picked.voiceURI) ?? picked : null;
   if (voice) {
     utterance.voice = voice;
     utterance.lang = voice.lang || 'ko-KR';
@@ -153,13 +167,13 @@ export function speakKorean(text: string): void {
     try {
       stopVoiceAudio();
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      bindUtteranceVoice(utterance);
       window.setTimeout(() => {
         if (activeVoiceStyle === 'mute') return;
+        refreshVoiceCache();
+        const utterance = new SpeechSynthesisUtterance(text);
         bindUtteranceVoice(utterance);
         window.speechSynthesis.speak(utterance);
-      }, 80);
+      }, 120);
     } catch {
       // 음성 미지원 기기는 무시
     }
@@ -191,7 +205,7 @@ export function stopRepeatingSpeech(): void {
   }
 }
 
-export function startRepeatingSpeech(text: string, intervalMs = 10000): void {
+export function startRepeatingSpeech(text: string, intervalMs = 11000): void {
   stopRepeatingSpeech();
   speakOffRouteAlert(text);
   repeatingTimer = window.setInterval(() => {

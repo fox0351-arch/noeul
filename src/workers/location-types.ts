@@ -30,11 +30,12 @@ export type LocationWorkerInbound =
       absolute: boolean;
       timestamp: number;
     }
-  | {
+    | {
       type: 'motion';
       acceleration: { x: number | null; y: number | null; z: number | null };
       timestamp: number;
-    };
+    }
+  | { type: 'route'; points: { lat: number; lng: number }[] };
 
 export type LocationWorkerOutbound =
   | { type: 'ready'; geolocationInWorker: boolean }

@@ -142,6 +142,7 @@ export default function HomePage() {
   const currentRouteRef = useRef(currentRoute);
   const isFollowModeRef = useRef(isFollowMode);
   const didCenterOnGpsRef = useRef(false);
+  const gpsSignalRef = useRef<LocationSignalManager | null>(null);
   const applyImportedTrailFileRef = useRef<(file: File) => Promise<void>>(async () => {});
   const [arrowRotationOffset, setArrowRotationOffset] = useState(0);
   const { installed, hint: installHint, install: installApp } = usePwaInstall();
@@ -201,6 +202,7 @@ export default function HomePage() {
     setVoiceStyle(prefs.voiceStyle);
     setHeadingUpMode(prefs.headingUp);
     setActiveVoiceStyle(prefs.voiceStyle);
+    warmSpeechVoices();
     const storedArrow = window.localStorage.getItem('noeul.arrowRotationOffset.v1');
     const parsedArrow = storedArrow == null ? NaN : Number(storedArrow);
     if (ARROW_ROTATION_OFFSETS.includes(parsedArrow as (typeof ARROW_ROTATION_OFFSETS)[number])) {
@@ -347,10 +349,15 @@ export default function HomePage() {
     let cancelled = false;
     const intervalMs = batterySave ? 10000 : 800;
     let offRouteSince = 0;
+    let onRouteSince = 0;
     console.info('[노을-gps] watch start', { intervalMs, follow: isFollowModeRef.current });
 
     const applyOffRoute = (distance: number, loc: PlaceLocation, routeLocations: PlaceLocation[]) => {
       if (distance < OFF_ROUTE_THRESHOLD_M) {
+        if (!onRouteSince) onRouteSince = Date.now();
+        if (offRouteLevelRef.current !== 0 && Date.now() - onRouteSince < 4000) {
+          return;
+        }
         offRouteSince = 0;
         const prevLevel = offRouteLevelRef.current;
         if (prevLevel === 0) {
@@ -370,6 +377,7 @@ export default function HomePage() {
         return;
       }
 
+      onRouteSince = 0;
       if (!offRouteSince) offRouteSince = Date.now();
       if (Date.now() - offRouteSince < OFF_ROUTE_HOLD_MS) return;
 
@@ -392,7 +400,7 @@ export default function HomePage() {
         offRouteToastTimerRef.current = window.setTimeout(() => setOffRouteToast(''), 3000);
         vibrateAlert(nextLevel);
         if (nextLevel === 100) {
-          startRepeatingSpeech(OFF_ROUTE_VOICE[100], 10000);
+          startRepeatingSpeech(OFF_ROUTE_VOICE[100], 11000);
         } else {
           speakOffRouteAlert(OFF_ROUTE_VOICE[nextLevel]);
         }
@@ -418,6 +426,13 @@ export default function HomePage() {
       .catch(() => {});
 
     const signal = new LocationSignalManager();
+    gpsSignalRef.current = signal;
+    signal.setRoute(
+      (currentRouteRef.current?.points ?? []).map((point) => ({
+        lat: point.latitude,
+        lng: point.longitude,
+      }))
+    );
     signal.start({
       intervalMs,
       batterySave,
@@ -501,6 +516,7 @@ export default function HomePage() {
 
     return () => {
       cancelled = true;
+      gpsSignalRef.current = null;
       signal.stop();
       stopRepeatingSpeech();
       console.info('[노을-gps] watch stop');
@@ -508,6 +524,15 @@ export default function HomePage() {
     // GPS는 따라가기와 무관하게 켜 둡니다. 이탈 판정만 isFollowModeRef를 봅니다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batterySave]);
+
+  useEffect(() => {
+    gpsSignalRef.current?.setRoute(
+      (currentRoute?.points ?? []).map((point) => ({
+        lat: point.latitude,
+        lng: point.longitude,
+      }))
+    );
+  }, [currentRoute]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1500,8 +1525,8 @@ export default function HomePage() {
       </header>
       {isFollowMode && (
         <div
-          className="fixed left-2 z-[100] px-3 py-2 rounded-lg shadow-lg bg-black/85"
-          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 3.4rem)' }}
+          className="fixed right-2 z-[100] px-3 py-2 rounded-lg shadow-lg bg-black/85"
+          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 7.4rem)' }}
         >
           <button
             type="button"
@@ -2064,42 +2089,46 @@ export default function HomePage() {
           </div>
         </div>
       )}
-      <button
-        type="button"
-        onClick={handleLocateMe}
-        disabled={isLocating}
-        className={`fixed z-[90] relative flex items-center justify-center text-3xl rounded-full shadow-[0_4px_12px_rgba(0,0,0,0.35)] right-4 border-4 border-white ${
-          userLocation
-            ? 'bg-blue-600 text-white'
-            : 'bg-slate-400 text-slate-100'
-        }`}
+      <div
+        className="fixed z-[90] flex flex-col items-center gap-2 pointer-events-none"
         style={{
-          width: 64,
-          height: 64,
-          bottom: 'calc(1rem + 56px + 12px + env(safe-area-inset-bottom, 0px))',
+          top: 'calc(env(safe-area-inset-top, 0px) + 4.65rem)',
+          left: '0.7rem',
         }}
-        aria-label="현재 위치로 이동"
       >
-        <span aria-hidden>🎯</span>
-        {userLocation && gpsAccuracyM != null && gpsAccuracyM >= WEAK_GPS_ACCURACY_M && (
-          <span className="absolute flex items-center justify-center w-7 h-7 text-base font-black text-white bg-red-600 rounded-full -top-1 -right-1">
-            !
-          </span>
-        )}
-      </button>
-      <button
-        type="button"
-        onClick={handleOpenSos}
-        className="fixed z-[90] flex items-center justify-center text-xl font-black text-white bg-red-600 rounded-full shadow-lg right-4 hover:bg-red-700"
-        style={{
-          width: 56,
-          height: 56,
-          bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
-        }}
-        aria-label="긴급 SOS"
-      >
-        SOS
-      </button>
+        <button
+          type="button"
+          onClick={handleLocateMe}
+          disabled={isLocating}
+          className="relative flex items-center justify-center overflow-hidden rounded-full pointer-events-auto bg-white/70 shadow-[0_4px_14px_rgba(15,23,42,0.22)] disabled:opacity-60"
+          style={{ width: 36, height: 36 }}
+          aria-label="현재 위치로 이동"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/icon-my-location.jpg"
+            alt=""
+            width={24}
+            height={24}
+            className="object-cover w-6 h-6 pointer-events-none"
+            draggable={false}
+          />
+          {userLocation && gpsAccuracyM != null && gpsAccuracyM >= WEAK_GPS_ACCURACY_M && (
+            <span className="absolute flex items-center justify-center w-3.5 h-3.5 text-[9px] font-black text-white bg-red-600 rounded-full -top-0.5 -right-0.5">
+              !
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={handleOpenSos}
+          className="flex items-center justify-center text-[11px] leading-none font-black text-orange-700 bg-orange-100 border border-orange-400 rounded-full pointer-events-auto shadow-[0_3px_10px_rgba(154,52,18,0.28)] hover:bg-orange-200"
+          style={{ width: 48, height: 48 }}
+          aria-label="긴급 SOS"
+        >
+          SOS
+        </button>
+      </div>
       {batterySupported && batteryAlertBand === 'low5' && (
         <div className="fixed inset-0 z-[72] flex items-center justify-center p-6 bg-red-800" role="alert">
           <div className="text-center text-white">
@@ -2112,7 +2141,7 @@ export default function HomePage() {
         <div
           role="status"
           className="fixed z-[92] left-1/2 -translate-x-1/2 px-3 py-2 text-sm font-bold text-white bg-slate-800/95 rounded-lg shadow"
-          style={{ bottom: 'calc(1rem + 56px + 76px + env(safe-area-inset-bottom, 0px))' }}
+          style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}
         >
           {returnToast || locateToast}
         </div>

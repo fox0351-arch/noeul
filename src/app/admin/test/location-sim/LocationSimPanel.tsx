@@ -67,6 +67,7 @@ function LocationSimPanelLive() {
     store.setHeadingUp(true);
 
     const signal = new LocationSignalManager();
+    signal.setRoute(routePoints.map((point) => ({ lat: point.latitude, lng: point.longitude })));
     signal.start({
       intervalMs: 800,
       batterySave: false,
@@ -101,7 +102,7 @@ function LocationSimPanelLive() {
       signal.stop();
       useLocationStore.getState().setFollowMode(false);
     };
-  }, [running]);
+  }, [running, routePoints]);
 
   return (
     <div className="flex flex-col h-dvh bg-slate-100">

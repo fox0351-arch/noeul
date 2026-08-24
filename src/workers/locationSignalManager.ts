@@ -26,6 +26,7 @@ export class LocationSignalManager {
   private options: StartOptions | null = null;
   private geolocationInWorker = false;
   private mockPump: LocationMockPump | null = null;
+  private pendingRoute: { lat: number; lng: number }[] = [];
 
   static async requestSensorPermissions(): Promise<void> {
     const orientation = DeviceOrientationEvent as unknown as {
@@ -72,9 +73,11 @@ export class LocationSignalManager {
         if (useMock) {
           this.mockPump = new LocationMockPump();
           this.mockPump.start((msg) => this.post(msg), options.intervalMs);
+          this.post({ type: 'route', points: this.pendingRoute });
           return;
         }
         this.attachMainThreadSensors();
+        this.post({ type: 'route', points: this.pendingRoute });
         return;
       }
       if (message.type === 'location') {
@@ -109,6 +112,11 @@ export class LocationSignalManager {
     }
     this.geolocationInWorker = false;
     this.options = null;
+  }
+
+  setRoute(points: { lat: number; lng: number }[]): void {
+    this.pendingRoute = points;
+    this.post({ type: 'route', points });
   }
 
   private post(message: LocationWorkerInbound): void {

@@ -56,6 +56,38 @@ function distanceToSegmentMeters(
   return closestOnSegment(point, start, end).distance;
 }
 
+export function wrapDegrees(value: number): number {
+  return ((value % 360) + 360) % 360;
+}
+
+export function shortestAngleDelta(from: number, to: number): number {
+  return ((to - from + 540) % 360) - 180;
+}
+
+export function lerpBearing(from: number, to: number, t: number): number {
+  return wrapDegrees(from + shortestAngleDelta(from, to) * t);
+}
+
+/** 현재 위치에서 가장 가까운 경로 구간의 진행 방향(시작→끝)입니다. */
+export function nearestSegmentBearing(
+  point: PlaceLocation,
+  route: PlaceLocation[]
+): number | null {
+  if (route.length < 2) return null;
+  let bestDist = Number.POSITIVE_INFINITY;
+  let bestBearing = 0;
+  for (let i = 0; i < route.length - 1; i += 1) {
+    const start = route[i];
+    const end = route[i + 1];
+    const dist = distanceToSegmentMeters(point, start, end);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestBearing = bearingDegrees(start, end);
+    }
+  }
+  return bestBearing;
+}
+
 export function closestPointOnRoute(
   point: PlaceLocation,
   route: PlaceLocation[]
