@@ -1,6 +1,8 @@
 import {
+  CAMERA_BEARING_DEADZONE_DEG,
   GPS_JUMP_MAX_MPS,
   GPS_JUMP_MIN_M,
+  MAP_ROTATE_LOCK_MPS,
   MAX_ACCEPT_GPS_ACCURACY_M,
   MAX_HEADING_STEP_DEG,
   MIN_HEADING_MOVE_M,
@@ -30,6 +32,7 @@ let lastFix: { lat: number; lng: number } | null = null;
 let lastFixAt = 0;
 let fusedBearing: number | null = null;
 let lastSpeedKmh: number | null = null;
+let smoothSpeedMps = 0;
 let lastAccuracy = 40;
 let trail: { lat: number; lng: number }[] = [];
 
@@ -90,9 +93,10 @@ function applyCourse(course: number): void {
     return;
   }
   const delta = Math.abs(shortestAngleDelta(fusedBearing, course));
+  if (delta < CAMERA_BEARING_DEADZONE_DEG) return;
   if (delta > MAX_HEADING_STEP_DEG) return;
   fusedBearing = wrapDegrees(
-    fusedBearing + shortestAngleDelta(fusedBearing, course) * 0.45
+    fusedBearing + shortestAngleDelta(fusedBearing, course) * 0.22
   );
 }
 
@@ -130,10 +134,16 @@ function applyGpsSample(input: {
     { latitude: next.lat, longitude: next.lng },
     elapsedMs
   );
+  if (lastSpeedKmh != null) {
+    const instantMps = lastSpeedKmh / 3.6;
+    smoothSpeedMps = smoothSpeedMps * 0.75 + instantMps * 0.25;
+  }
 
   pushTrail(next.lat, next.lng);
   const course = courseFromTrail();
-  if (course != null) applyCourse(course);
+  if (course != null && smoothSpeedMps > MAP_ROTATE_LOCK_MPS) {
+    applyCourse(course);
+  }
 
   lastFix = next;
   lastFixAt = input.timestamp;
@@ -149,6 +159,7 @@ function resetSignalState(): void {
   lastFixAt = 0;
   fusedBearing = null;
   lastSpeedKmh = null;
+  smoothSpeedMps = 0;
   lastAccuracy = 40;
   trail = [];
 }

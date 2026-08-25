@@ -1,10 +1,13 @@
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
-import { destinationPoint } from '@/lib/geo';
+import { CAMERA_BEARING_DEADZONE_DEG, destinationPoint, shortestAngleDelta } from '@/lib/geo';
 import { PlaceItem, PlaceLocation } from '@/types/place';
 import { useLocationStore, type FollowCameraDebug } from '@/store/useLocationStore';
 
 const WALK_ZOOM = 18;
 const CAMERA_MIN_INTERVAL_MS = 200;
+/** 200ms마다 8%만 따라갑니다. 늦게 돌아도 흔들리지 않게 합니다. */
+const CAMERA_HEADING_LERP = 0.08;
+const CAMERA_POSITION_LERP = 0.35;
 const MAX_TRACK_POINTS = 3000;
 const TRACK_MIN_STEP_M = 2;
 const USER_MARKER_SCALE = 8;
@@ -114,6 +117,7 @@ export class MapManager {
   private renderedLat: number | null = null;
   private renderedLng: number | null = null;
   private renderedHeading = 0;
+  private committedHeading: number | null = null;
   private unsubscribeStore: (() => void) | null = null;
   private moveCameraCount = 0;
   private fitBoundsCount = 0;
@@ -524,8 +528,10 @@ export class MapManager {
           this.fitBoundsCount = 0;
           this.dragPauseUntil = 0;
           this.lastCameraAt = 0;
-          this.renderedLat = null;
-          this.renderedLng = null;
+          const startBearing = useLocationStore.getState().bearing;
+          this.committedHeading =
+            startBearing != null && Number.isFinite(startBearing) ? startBearing : null;
+          if (this.committedHeading != null) this.renderedHeading = this.committedHeading;
         }
         if (!slice.followMode && prev.followMode) {
           this.resetNorthUp();
@@ -567,21 +573,36 @@ export class MapManager {
     const user: PlaceLocation = { latitude: state.lat, longitude: state.lng };
     const travel =
       state.bearing != null && Number.isFinite(state.bearing) ? state.bearing : null;
-    const heading = state.headingUp && travel != null ? travel : 0;
+    if (state.headingUp) {
+      if (travel != null) {
+        if (this.committedHeading == null) {
+          this.committedHeading = travel;
+        } else if (
+          Math.abs(shortestAngleDelta(this.committedHeading, travel)) >= CAMERA_BEARING_DEADZONE_DEG
+        ) {
+          this.committedHeading = travel;
+        }
+      }
+    } else {
+      this.committedHeading = 0;
+    }
+
+    const headingTarget = this.committedHeading ?? this.renderedHeading;
+    this.renderedHeading = lerpHeading(this.renderedHeading, headingTarget, CAMERA_HEADING_LERP);
+
     const mapH = map.getDiv()?.clientHeight || 640;
     const target =
-      state.headingUp && travel != null
-        ? lookAhead(user, heading, mapH, WALK_ZOOM)
+      state.headingUp && this.committedHeading != null
+        ? lookAhead(user, this.renderedHeading, mapH, WALK_ZOOM)
         : { lat: user.latitude, lng: user.longitude };
 
     if (this.renderedLat == null || this.renderedLng == null) {
       this.renderedLat = target.lat;
       this.renderedLng = target.lng;
-      this.renderedHeading = heading;
+      if (this.committedHeading != null) this.renderedHeading = this.committedHeading;
     } else {
-      this.renderedLat = lerp(this.renderedLat, target.lat, 0.55);
-      this.renderedLng = lerp(this.renderedLng, target.lng, 0.55);
-      this.renderedHeading = lerpHeading(this.renderedHeading, heading, 0.32);
+      this.renderedLat = lerp(this.renderedLat, target.lat, CAMERA_POSITION_LERP);
+      this.renderedLng = lerp(this.renderedLng, target.lng, CAMERA_POSITION_LERP);
     }
 
     const moved = this.moveCameraOnce({
@@ -657,6 +678,7 @@ export class MapManager {
     this.renderedLat = null;
     this.renderedLng = null;
     this.renderedHeading = 0;
+    this.committedHeading = null;
     useLocationStore.getState().setCameraDebug(null);
   }
 

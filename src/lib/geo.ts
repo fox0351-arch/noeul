@@ -137,12 +137,18 @@ export const MAX_ACCEPT_GPS_ACCURACY_M = 40;
 export const GPS_JUMP_MIN_M = 28;
 export const GPS_JUMP_MAX_MPS = 5;
 export const GPS_SMOOTH_COUNT = 2;
-/** 이보다 짧게 움직이면 화살표를 고정합니다. GPS ±5~10m보다 긴 구간이어야 옆으로 눕지 않습니다. */
-export const MIN_HEADING_MOVE_M = 10;
+/** GPS ±5~10m보다 긴 구간이 쌓여야 진행 방향으로 인정합니다. */
+export const MIN_HEADING_MOVE_M = 16;
 /** 한 번에 이보다 크게 꺾이면 GPS 튕김으로 보고 이번 값은 버립니다. */
 export const MAX_HEADING_STEP_DEG = 75;
-export const MIN_MAP_ROTATE_KMH = 1;
-export const STOP_MAP_ROTATE_KMH = 0.7;
+/** 1 m/s 이하에서는 지도 회전을 잠급니다. GPS 5~10m 흔들림이 걷는 방향으로 오인되지 않게 합니다. */
+export const MAP_ROTATE_LOCK_MPS = 1;
+export const MAP_ROTATE_START_MPS = 1.15;
+export const MAP_ROTATE_STOP_MPS = 0.85;
+/** 이보다 작은 방위 변화는 카메라에 넣지 않습니다. */
+export const CAMERA_BEARING_DEADZONE_DEG = 15;
+export const MIN_MAP_ROTATE_KMH = MAP_ROTATE_START_MPS * 3.6;
+export const STOP_MAP_ROTATE_KMH = MAP_ROTATE_STOP_MPS * 3.6;
 
 export type OffRouteLevel = 0 | 20 | 50 | 100;
 

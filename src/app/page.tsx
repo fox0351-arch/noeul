@@ -12,7 +12,7 @@ import { generateTravelBlogEssay, TravelBlogDraft } from '@/lib/travelBlogEssay'
 import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem, withPresetChecklistTexts } from '@/types/travelMap';
 import { TravelRoute, routePointsToLocations } from '@/types/route';
 import { parseTrailFile } from '@/lib/gpxKmlParser';
-import { OffRouteLevel, bearingDegrees, closestPointOnRoute, distanceToRouteMeters, offRouteLevelFromDistance, MIN_MAP_ROTATE_KMH, OFF_ROUTE_HOLD_MS, OFF_ROUTE_THRESHOLD_M, STOP_MAP_ROTATE_KMH, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
+import { OffRouteLevel, bearingDegrees, closestPointOnRoute, distanceToRouteMeters, offRouteLevelFromDistance, MAP_ROTATE_START_MPS, MAP_ROTATE_STOP_MPS, OFF_ROUTE_HOLD_MS, OFF_ROUTE_THRESHOLD_M, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
 import { LocationSignalManager } from '@/workers/locationSignalManager';
 import {
   formatSosMessage,
@@ -195,7 +195,7 @@ export default function HomePage() {
     setGuardianPhone(loadGuardianPhone());
     const prefs = loadUserSettings();
     setVoiceStyle(prefs.voiceStyle);
-    setHeadingUpMode(prefs.headingUp);
+    setHeadingUpMode(true);
     setActiveVoiceStyle(prefs.voiceStyle);
     warmSpeechVoices();
     const contrastOn = window.localStorage.getItem('noeul.highContrast.v1') === '1';
@@ -488,10 +488,11 @@ export default function HomePage() {
         setLocationDenied(false);
 
         if (fix.speedKmh != null) {
-          if (fix.speedKmh >= MIN_MAP_ROTATE_KMH) mapRotatingRef.current = true;
-          if (fix.speedKmh < STOP_MAP_ROTATE_KMH) mapRotatingRef.current = false;
+          const speedMps = fix.speedKmh / 3.6;
+          if (speedMps >= MAP_ROTATE_START_MPS) mapRotatingRef.current = true;
+          if (speedMps <= MAP_ROTATE_STOP_MPS) mapRotatingRef.current = false;
         }
-        if (heading != null) {
+        if (heading != null && mapRotatingRef.current) {
           lastGoodHeadingRef.current = heading;
           mapHeadingRef.current = heading;
         }
@@ -2160,7 +2161,6 @@ export default function HomePage() {
                 type="button"
                 onClick={() => {
                   setHeadingUpMode(false);
-                  saveUserSettings({ headingUp: false });
                 }}
                 aria-pressed={!headingUpMode}
                 className={`pointer-events-auto px-2 text-xs font-black rounded-md border ${
