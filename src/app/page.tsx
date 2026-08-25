@@ -42,7 +42,7 @@ import { loadLastGps, saveLastGps, lastGpsToLocation } from '@/lib/lastGps';
 import { loadGuardianPhone, saveGuardianPhone } from '@/lib/guardianStorage';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
 import { loadUserSettings, saveUserSettings, type VoiceStyle } from '@/lib/userData';
-import MapDomView, { ARROW_ROTATION_OFFSETS } from '@/components/MapDomView';
+import MapDomView from '@/components/MapDomView';
 import SimQueryRedirect from '@/components/SimQueryRedirect';
 import { useLocationStore } from '@/store/useLocationStore';
 import { MapManager } from '@/services/MapManager';
@@ -141,7 +141,6 @@ export default function HomePage() {
   const didCenterOnGpsRef = useRef(false);
   const gpsSignalRef = useRef<LocationSignalManager | null>(null);
   const applyImportedTrailFileRef = useRef<(file: File) => Promise<void>>(async () => {});
-  const [arrowRotationOffset, setArrowRotationOffset] = useState(0);
   const { installed, hint: installHint, install: installApp } = usePwaInstall();
 
   const displayedPlaces = useMemo(() => {
@@ -199,11 +198,6 @@ export default function HomePage() {
     setHeadingUpMode(prefs.headingUp);
     setActiveVoiceStyle(prefs.voiceStyle);
     warmSpeechVoices();
-    const storedArrow = window.localStorage.getItem('noeul.arrowRotationOffset.v2');
-    const parsedArrow = storedArrow == null ? NaN : Number(storedArrow);
-    if (ARROW_ROTATION_OFFSETS.includes(parsedArrow as (typeof ARROW_ROTATION_OFFSETS)[number])) {
-      setArrowRotationOffset(parsedArrow);
-    }
     const contrastOn = window.localStorage.getItem('noeul.highContrast.v1') === '1';
     setHighContrast(contrastOn);
     document.documentElement.classList.toggle('high-contrast', contrastOn);
@@ -563,8 +557,7 @@ export default function HomePage() {
     store.setHeadingUp(isFollowMode && headingUpMode);
     store.setMapHeadingDeg(mapHeadingDeg);
     store.setRecenterId(recenterRequestId);
-    store.setArrowRotationOffset(arrowRotationOffset);
-  }, [isFollowMode, headingUpMode, mapHeadingDeg, recenterRequestId, arrowRotationOffset]);
+  }, [isFollowMode, headingUpMode, mapHeadingDeg, recenterRequestId]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- 선택한 장소 설명을 불러옵니다 */
   useEffect(() => {
@@ -1511,27 +1504,6 @@ export default function HomePage() {
           )}
         </div>
       </header>
-      {isFollowMode && (
-        <div
-          className="fixed right-2 z-[100] px-3 py-2 rounded-lg shadow-lg bg-black/85"
-          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 7.4rem)' }}
-        >
-          <button
-            type="button"
-            className="px-3 py-2 text-lg font-black text-slate-900 bg-yellow-300 rounded-md min-h-12"
-            onClick={() => {
-              const idx = ARROW_ROTATION_OFFSETS.indexOf(
-                arrowRotationOffset as (typeof ARROW_ROTATION_OFFSETS)[number]
-              );
-              const next = ARROW_ROTATION_OFFSETS[(idx + 1) % ARROW_ROTATION_OFFSETS.length];
-              setArrowRotationOffset(next);
-              window.localStorage.setItem('noeul.arrowRotationOffset.v2', String(next));
-            }}
-          >
-            화살표 보정
-          </button>
-        </div>
-      )}
       {installHint && (
         <p className="px-3 py-2 text-base font-bold text-center text-slate-900 bg-amber-100">{installHint}</p>
       )}

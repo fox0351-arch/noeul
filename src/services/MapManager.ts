@@ -7,7 +7,7 @@ const WALK_ZOOM = 18;
 const CAMERA_MIN_INTERVAL_MS = 200;
 const MAX_TRACK_POINTS = 3000;
 const TRACK_MIN_STEP_M = 2;
-const USER_MARKER_SCALE = 12;
+const USER_MARKER_SCALE = 8;
 const RETURN_MARKER_SCALE = 18;
 const ROUTE_STROKE_COLOR = '#FF0000';
 const ROUTE_STROKE_WEIGHT = 6;
@@ -68,21 +68,14 @@ export function exitBrowserFullscreen(): void {
   }
 }
 
-function wrapHeading(value: number): number {
-  return ((value % 360) + 360) % 360;
-}
-
-/** rotation 0 = 지리 북쪽. 헤딩업 카메라와 같은 방위를 넣으면 화면 위를 가리킵니다. */
-function headingArrowIcon(rotation: number): google.maps.Symbol {
+function userDotIcon(): google.maps.Symbol {
   return {
-    path: 'M 0,-3.2 L 2.1,2.6 L 0,1.2 L -2.1,2.6 z',
-    scale: 2.2,
-    fillColor: '#1d4ed8',
+    path: google.maps.SymbolPath.CIRCLE,
+    scale: USER_MARKER_SCALE,
+    fillColor: '#4285F4',
     fillOpacity: 1,
-    strokeColor: '#ffffff',
-    strokeWeight: 1.2,
-    rotation: wrapHeading(rotation),
-    anchor: new google.maps.Point(0, 0.4),
+    strokeColor: '#FFFFFF',
+    strokeWeight: 3,
   };
 }
 
@@ -105,7 +98,6 @@ export class MapManager {
   private trackPath: google.maps.LatLngLiteral[] = [];
   private placeMarkers: google.maps.Marker[] = [];
   private userMarker: google.maps.Marker | null = null;
-  private headingMarker: google.maps.Marker | null = null;
   private returnMarker: google.maps.Marker | null = null;
   private returnHalo: google.maps.Circle | null = null;
   private returnPulseTimer: number | null = null;
@@ -122,7 +114,6 @@ export class MapManager {
   private renderedLat: number | null = null;
   private renderedLng: number | null = null;
   private renderedHeading = 0;
-  private renderedMarkerHeading: number | null = null;
   private unsubscribeStore: (() => void) | null = null;
   private moveCameraCount = 0;
   private fitBoundsCount = 0;
@@ -193,11 +184,9 @@ export class MapManager {
     this.routeLine?.setMap(null);
     this.trackLine?.setMap(null);
     this.userMarker?.setMap(null);
-    this.headingMarker?.setMap(null);
     this.routeLine = null;
     this.trackLine = null;
     this.userMarker = null;
-    this.headingMarker = null;
     this.trackPath = [];
     this.map = null;
   }
@@ -509,7 +498,7 @@ export class MapManager {
     const current = useLocationStore.getState();
     this.lastRecenterId = current.recenterId;
     if (current.lat != null && current.lng != null) {
-      this.syncUserMarker(current.lat, current.lng, current.bearing, current.arrowRotationOffset);
+      this.syncUserMarker(current.lat, current.lng);
     }
 
     this.unsubscribeStore = useLocationStore.subscribe(
@@ -519,12 +508,11 @@ export class MapManager {
         bearing: s.bearing,
         fromGps: s.fromGps,
         followMode: s.followMode,
-        arrowRotationOffset: s.arrowRotationOffset,
         recenterId: s.recenterId,
       }),
       (slice, prev) => {
         if (slice.lat != null && slice.lng != null) {
-          this.syncUserMarker(slice.lat, slice.lng, slice.bearing, slice.arrowRotationOffset);
+          this.syncUserMarker(slice.lat, slice.lng);
           if (slice.fromGps && slice.followMode) {
             this.appendTrackPoint({ lat: slice.lat, lng: slice.lng });
           }
@@ -538,7 +526,6 @@ export class MapManager {
           this.lastCameraAt = 0;
           this.renderedLat = null;
           this.renderedLng = null;
-          this.renderedMarkerHeading = null;
         }
         if (!slice.followMode && prev.followMode) {
           this.resetNorthUp();
@@ -605,17 +592,6 @@ export class MapManager {
     });
     if (!moved) return;
 
-    const arrowApplied =
-      travel != null
-        ? wrapHeading(
-            (state.headingUp ? this.renderedHeading : travel) + state.arrowRotationOffset
-          )
-        : null;
-    if (arrowApplied != null) {
-      this.renderedMarkerHeading = arrowApplied;
-      this.headingMarker?.setIcon(headingArrowIcon(arrowApplied));
-    }
-
     const center = map.getCenter();
     const mapCenterLat = center?.lat() ?? this.renderedLat;
     const mapCenterLng = center?.lng() ?? this.renderedLng;
@@ -636,8 +612,8 @@ export class MapManager {
         )
       ),
       heading: state.bearing,
-      arrowApplied,
-      arrowOffset: state.arrowRotationOffset,
+      arrowApplied: null,
+      arrowOffset: 0,
     };
     useLocationStore.getState().setCameraDebug(debug);
   }
@@ -681,16 +657,10 @@ export class MapManager {
     this.renderedLat = null;
     this.renderedLng = null;
     this.renderedHeading = 0;
-    this.renderedMarkerHeading = null;
     useLocationStore.getState().setCameraDebug(null);
   }
 
-  private syncUserMarker(
-    lat: number,
-    lng: number,
-    bearing: number | null,
-    arrowOffset: number
-  ): void {
+  private syncUserMarker(lat: number, lng: number): void {
     const map = this.map;
     if (!map || !window.google) return;
     const position = { lat, lng };
@@ -701,45 +671,13 @@ export class MapManager {
         map,
         title: '현재 위치',
         zIndex: 10,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: USER_MARKER_SCALE,
-          fillColor: '#2563eb',
-          fillOpacity: 1,
-          strokeColor: '#ffffff',
-          strokeWeight: 3,
-        },
-      });
-    } else {
-      this.userMarker.setPosition(position);
-      this.userMarker.setMap(map);
-    }
-
-    if (bearing == null || !Number.isFinite(bearing)) return;
-    const headingUp = useLocationStore.getState().headingUp;
-    const followMode = useLocationStore.getState().followMode;
-    const target = wrapHeading(bearing + arrowOffset);
-    if (this.renderedMarkerHeading == null) this.renderedMarkerHeading = target;
-    else if (!followMode || !headingUp) {
-      this.renderedMarkerHeading = lerpHeading(this.renderedMarkerHeading, target, 0.35);
-    }
-    const arrowApplied = this.renderedMarkerHeading;
-    if (!this.headingMarker) {
-      this.headingMarker = new google.maps.Marker({
-        position,
-        map,
         clickable: false,
-        optimized: false,
-        zIndex: 11,
-        icon: headingArrowIcon(arrowApplied),
+        icon: userDotIcon(),
       });
       return;
     }
-    this.headingMarker.setPosition(position);
-    this.headingMarker.setMap(map);
-    if (!followMode || !headingUp) {
-      this.headingMarker.setIcon(headingArrowIcon(arrowApplied));
-    }
+    this.userMarker.setPosition(position);
+    this.userMarker.setMap(map);
   }
 
   private appendTrackPoint(point: google.maps.LatLngLiteral): void {
