@@ -1,12 +1,12 @@
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
-import { CAMERA_BEARING_DEADZONE_DEG, destinationPoint, shortestAngleDelta } from '@/lib/geo';
+import { destinationPoint } from '@/lib/geo';
 import { PlaceItem, PlaceLocation } from '@/types/place';
 import { useLocationStore, type FollowCameraDebug } from '@/store/useLocationStore';
 
 const WALK_ZOOM = 18;
 const CAMERA_MIN_INTERVAL_MS = 200;
-/** 200ms마다 8%만 따라갑니다. 늦게 돌아도 흔들리지 않게 합니다. */
-const CAMERA_HEADING_LERP = 0.08;
+/** worker에서 안정화한 bearing을 카메라가 부드럽게 따라갑니다. */
+const CAMERA_HEADING_LERP = 0.12;
 const CAMERA_POSITION_LERP = 0.35;
 const MAX_TRACK_POINTS = 3000;
 const TRACK_MIN_STEP_M = 2;
@@ -118,6 +118,7 @@ export class MapManager {
   private renderedLng: number | null = null;
   private renderedHeading = 0;
   private committedHeading: number | null = null;
+  private lastRotationLogAt = 0;
   private unsubscribeStore: (() => void) | null = null;
   private moveCameraCount = 0;
   private fitBoundsCount = 0;
@@ -574,15 +575,8 @@ export class MapManager {
     const travel =
       state.bearing != null && Number.isFinite(state.bearing) ? state.bearing : null;
     if (state.headingUp) {
-      if (travel != null) {
-        if (this.committedHeading == null) {
-          this.committedHeading = travel;
-        } else if (
-          Math.abs(shortestAngleDelta(this.committedHeading, travel)) >= CAMERA_BEARING_DEADZONE_DEG
-        ) {
-          this.committedHeading = travel;
-        }
-      }
+      // 거리·속도·각도 판정은 worker에서 끝났습니다. 카메라는 중복 차단하지 않습니다.
+      if (travel != null) this.committedHeading = travel;
     } else {
       this.committedHeading = 0;
     }
@@ -612,6 +606,19 @@ export class MapManager {
       zoom: WALK_ZOOM,
     });
     if (!moved) return;
+
+    const now = Date.now();
+    if (now - this.lastRotationLogAt >= 5000) {
+      this.lastRotationLogAt = now;
+      console.info('[노을-회전/camera]', {
+        followMode: state.followMode,
+        headingUpMode: state.headingUp,
+        workerBearing: travel,
+        cameraTargetBearing: this.committedHeading,
+        renderedBearing: Math.round(this.renderedHeading * 10) / 10,
+        speedMps: state.speedKmh == null ? null : Math.round((state.speedKmh / 3.6) * 100) / 100,
+      });
+    }
 
     const center = map.getCenter();
     const mapCenterLat = center?.lat() ?? this.renderedLat;

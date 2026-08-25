@@ -12,7 +12,7 @@ import { generateTravelBlogEssay, TravelBlogDraft } from '@/lib/travelBlogEssay'
 import { TRAVEL_MAP_CHECKLIST_PRESETS, TravelMap, TravelMapChecklistItem, withPresetChecklistTexts } from '@/types/travelMap';
 import { TravelRoute, routePointsToLocations } from '@/types/route';
 import { parseTrailFile } from '@/lib/gpxKmlParser';
-import { OffRouteLevel, bearingDegrees, closestPointOnRoute, distanceToRouteMeters, offRouteLevelFromDistance, MAP_ROTATE_START_MPS, MAP_ROTATE_STOP_MPS, OFF_ROUTE_HOLD_MS, OFF_ROUTE_THRESHOLD_M, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
+import { OffRouteLevel, bearingDegrees, closestPointOnRoute, distanceToRouteMeters, offRouteLevelFromDistance, OFF_ROUTE_HOLD_MS, OFF_ROUTE_THRESHOLD_M, WEAK_GPS_ACCURACY_M } from '@/lib/geo';
 import { LocationSignalManager } from '@/workers/locationSignalManager';
 import {
   formatSosMessage,
@@ -134,8 +134,8 @@ export default function HomePage() {
   const lastFixRef = useRef<PlaceLocation | null>(null);
   const lastFixAtRef = useRef(0);
   const mapHeadingRef = useRef<number | null>(null);
-  const mapRotatingRef = useRef(false);
   const lastGoodHeadingRef = useRef<number | null>(null);
+  const rotationLogAtRef = useRef(0);
   const lastRawGpsRef = useRef<PlaceLocation | null>(null);
   const currentRouteRef = useRef(currentRoute);
   const isFollowModeRef = useRef(isFollowMode);
@@ -487,14 +487,27 @@ export default function HomePage() {
         lastRawGpsRef.current = next;
         setLocationDenied(false);
 
-        if (fix.speedKmh != null) {
-          const speedMps = fix.speedKmh / 3.6;
-          if (speedMps >= MAP_ROTATE_START_MPS) mapRotatingRef.current = true;
-          if (speedMps <= MAP_ROTATE_STOP_MPS) mapRotatingRef.current = false;
-        }
-        if (heading != null && mapRotatingRef.current) {
+        // worker가 거리·속도·각도를 한 번만 판정합니다. 화면에서는 bearing을 다시 막지 않습니다.
+        if (heading != null) {
           lastGoodHeadingRef.current = heading;
           mapHeadingRef.current = heading;
+        }
+
+        if (fix.timestamp - rotationLogAtRef.current >= 5000) {
+          rotationLogAtRef.current = fix.timestamp;
+          console.info('[노을-회전/worker]', {
+            followMode: isFollowModeRef.current,
+            headingUpMode: useLocationStore.getState().headingUp,
+            accuracyM: accuracy,
+            measuredSpeedMps: fix.rotationDebug?.measuredSpeedMps ?? null,
+            smoothSpeedMps: fix.rotationDebug?.smoothSpeedMps ?? null,
+            windowSpeedMps: fix.rotationDebug?.windowSpeedMps ?? null,
+            gateSpeedMps: fix.rotationDebug?.gateSpeedMps ?? null,
+            course: fix.rotationDebug?.course ?? null,
+            workerBearing: fix.rotationDebug?.fusedBearing ?? null,
+            decision: fix.rotationDebug?.decision ?? 'no-debug',
+            blockedCounts: fix.rotationDebug?.counts ?? null,
+          });
         }
 
         lastFixRef.current = next;
@@ -1023,7 +1036,6 @@ export default function HomePage() {
         fromGps: true,
       });
     }
-    mapRotatingRef.current = false;
     setHeadingUpMode(true);
     saveUserSettings({ headingUp: true });
     warmSpeechVoices();

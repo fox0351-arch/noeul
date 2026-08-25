@@ -81,7 +81,7 @@ export class LocationSignalManager {
         return;
       }
       if (message.type === 'location') {
-        this.mockPump?.noteFusedBearing(message.data.bearing);
+        this.mockPump?.noteFusedBearing(message.data.bearing, message.data.rotationDebug);
         this.options?.onLocation(message.data);
         return;
       }

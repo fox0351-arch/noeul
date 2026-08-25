@@ -9,6 +9,22 @@ export interface LocationWorkerFix extends LocationState {
   timestamp: number;
   fromGps: boolean;
   hasBearing: boolean;
+  rotationDebug?: {
+    measuredSpeedMps: number | null;
+    smoothSpeedMps: number;
+    windowSpeedMps: number | null;
+    gateSpeedMps: number;
+    course: number | null;
+    fusedBearing: number | null;
+    decision: 'waiting_distance' | 'speed_lock' | 'initial' | 'deadzone' | 'jump_rejected' | 'updated';
+    counts: {
+      waitingDistance: number;
+      speedLock: number;
+      deadzone: number;
+      jumpRejected: number;
+      updated: number;
+    };
+  };
 }
 
 export type LocationWorkerInbound =

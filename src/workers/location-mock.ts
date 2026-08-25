@@ -1,7 +1,7 @@
 import { destinationPoint, haversineMeters, bearingDegrees } from '@/lib/geo';
 import { PlaceLocation } from '@/types/place';
 import { TravelRoute } from '@/types/route';
-import type { LocationWorkerInbound } from './location-types';
+import type { LocationWorkerFix, LocationWorkerInbound } from './location-types';
 
 /** public/gyeokttara-2.gpx (계곡따라2) 트랙. 서울 기본 중심이 아닌 기장 계곡입니다. */
 export const GYEOKTTARA_2_POINTS: PlaceLocation[] = [
@@ -86,6 +86,7 @@ export type SimReport = {
   heapSlopeMbPerMin: number | null;
   headingErrorRms: number;
   headingErrorMax: number;
+  rotationDebug: LocationWorkerFix['rotationDebug'] | null;
   samples: SimHeapSample[];
 };
 
@@ -149,6 +150,7 @@ export class LocationMockPump {
   private statsTimer: number | null = null;
   private startedAt = 0;
   private lastFusedBearing: number | null = null;
+  private lastRotationDebug: LocationWorkerFix['rotationDebug'] = undefined;
   private samples: SimHeapSample[] = [];
 
   start(post: (message: LocationWorkerInbound) => void, gpsIntervalMs: number): void {
@@ -156,6 +158,7 @@ export class LocationMockPump {
     this.startedAt = Date.now();
     this.samples = [];
     this.lastFusedBearing = null;
+    this.lastRotationDebug = undefined;
 
     const gpsMs = Math.max(400, gpsIntervalMs);
     this.gpsTimer = window.setInterval(() => {
@@ -187,8 +190,12 @@ export class LocationMockPump {
     this.publish();
   }
 
-  noteFusedBearing(bearing: number): void {
+  noteFusedBearing(
+    bearing: number,
+    rotationDebug?: LocationWorkerFix['rotationDebug']
+  ): void {
     this.lastFusedBearing = bearing;
+    this.lastRotationDebug = rotationDebug;
   }
 
   stop(): void {
@@ -225,6 +232,7 @@ export class LocationMockPump {
       heapSlopeMbPerMin: slope != null ? Math.round(slope * 100) / 100 : null,
       headingErrorRms: Math.round(rms * 10) / 10,
       headingErrorMax: errors.length ? Math.round(Math.max(...errors) * 10) / 10 : 0,
+      rotationDebug: this.lastRotationDebug ?? null,
       samples: this.samples,
     };
   }
