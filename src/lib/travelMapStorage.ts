@@ -115,7 +115,8 @@ export function updateTravelMap(
   updates: Pick<TravelMap, 'title' | 'places' | 'sourceQuery'> & {
     memo?: string;
     checklist?: TravelMap['checklist'];
-    route?: TravelMap['route'];
+    /** null이면 루트만 제거합니다. undefined면 기존 루트를 유지합니다. */
+    route?: TravelMap['route'] | null;
   }
 ): TravelMap[] | null {
   const store = readStore();
@@ -135,11 +136,30 @@ export function updateTravelMap(
             sourceQuery: updates.sourceQuery,
             memo: updates.memo !== undefined ? updates.memo : map.memo,
             checklist: updates.checklist !== undefined ? updates.checklist : map.checklist,
-            route: updates.route !== undefined ? updates.route : map.route,
+            route: updates.route === undefined ? map.route : updates.route ?? undefined,
             updatedAt: now,
           }
         : map
     ),
+  };
+  writeStore(next);
+  return next.maps;
+}
+
+export function clearTravelMapRoute(id: string): TravelMap[] | null {
+  const store = readStore();
+  if (!store.maps.some((map) => map.id === id)) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const next: TravelMapStore = {
+    version: 1,
+    maps: store.maps.map((map) => {
+      if (map.id !== id) return map;
+      const { route: _removed, ...rest } = map;
+      return { ...rest, updatedAt: now };
+    }),
   };
   writeStore(next);
   return next.maps;

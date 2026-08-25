@@ -5,7 +5,7 @@ import { PlaceDetails, PlaceItem, PlaceLocation, PlacesSearchResponse } from '@/
 import { generateKML, downloadKmlFile } from '@/lib/kmlBuilder';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
 import { loadActiveRouteSession, saveActiveRouteSession } from '@/lib/activeRouteStorage';
-import { createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap, updateTravelMapNotes } from '@/lib/travelMapStorage';
+import { clearTravelMapRoute, createTravelMapId, deleteTravelMap, exportTravelMapBackupJson, loadTravelMaps, removePlaceFromTravelMap, restoreTravelMapsFromBackup, saveTravelMap, updateTravelMap, updateTravelMapNotes } from '@/lib/travelMapStorage';
 import { filesToPlacePhotos, isQuotaExceeded, MAX_PHOTOS_PER_PLACE } from '@/lib/placePhotos';
 import { analyzePlacePhotos } from '@/lib/photoAiClient';
 import { generateTravelBlogEssay, TravelBlogDraft } from '@/lib/travelBlogEssay';
@@ -83,6 +83,7 @@ export default function HomePage() {
   const placeListSectionRef = useRef<HTMLDivElement>(null);
   const backupFileInputRef = useRef<HTMLInputElement>(null);
   const routeFileInputRef = useRef<HTMLInputElement>(null);
+  const routeImportTargetMapIdRef = useRef<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const photoTargetPlaceId = useRef<string | null>(null);
   const shouldScrollToPlaceList = useRef(false);
@@ -714,7 +715,7 @@ export default function HomePage() {
         sourceQuery: currentQuery || undefined,
         memo: mapMemo,
         checklist: mapChecklist,
-        route: currentRoute ?? undefined,
+        route: currentRoute,
       });
       if (updated) {
         setTravelMaps(updated);
@@ -850,30 +851,54 @@ export default function HomePage() {
         setMapError('파일에서 걸을 수 있는 경로를 찾지 못했습니다.');
         return;
       }
+      const targetMapId = routeImportTargetMapIdRef.current ?? loadedMapId;
+      routeImportTargetMapIdRef.current = null;
+      const savedMap =
+        targetMapId
+          ? travelMaps.find((map) => map.id === targetMapId)
+            ?? loadTravelMaps().find((map) => map.id === targetMapId)
+          : undefined;
+
       setCurrentRoute(parsed.route);
-      setPlaces(parsed.places);
       setHideManualExtras(true);
       setSelectedPlaceId(null);
-      setCurrentQuery(parsed.route.name);
-      if (!mapTitle.trim()) {
-        setMapTitle(parsed.route.name);
-      }
-      const first = parsed.places[0]?.location ?? parsed.route.points[0];
-      if (first) setCenter(first);
       setIsFollowMode(false);
-      setMapNotice(`'${parsed.route.name}' 루트를 지도에 표시했습니다. 여행지도 저장으로 함께 보관하세요.`);
-      window.setTimeout(() => MapManager.getInstance().fitRouteBounds(), 0);
-      if (loadedMapId) {
-        const updated = updateTravelMap(loadedMapId, {
-          title: mapTitle.trim() || parsed.route.name,
-          places: parsed.places,
-          sourceQuery: parsed.route.name,
-          memo: mapMemo,
-          checklist: mapChecklist,
+      useLocationStore.getState().setFollowMode(false);
+
+      if (savedMap) {
+        const keptPlaces = savedMap.places.map((place) => ({ ...place }));
+        setPlaces(keptPlaces);
+        setLoadedMapId(savedMap.id);
+        setSelectedSavedMapId(savedMap.id);
+        setMapTitle(savedMap.title);
+        setMapMemo(savedMap.memo ?? '');
+        setMapChecklist(withPresetChecklistTexts(savedMap.checklist ?? []));
+        setCurrentQuery(savedMap.sourceQuery || savedMap.title);
+        const first = keptPlaces[0]?.location ?? parsed.route.points[0];
+        if (first) setCenter(first);
+        setMapNotice(
+          `'${savedMap.title}' 여행지도에 새 루트를 넣었습니다. 장소와 메모는 그대로입니다.`
+        );
+        const updated = updateTravelMap(savedMap.id, {
+          title: savedMap.title,
+          places: keptPlaces,
+          sourceQuery: savedMap.sourceQuery,
+          memo: savedMap.memo,
+          checklist: savedMap.checklist,
           route: parsed.route,
         });
         if (updated) setTravelMaps(updated);
+      } else {
+        setPlaces(parsed.places);
+        setCurrentQuery(parsed.route.name);
+        if (!mapTitle.trim()) {
+          setMapTitle(parsed.route.name);
+        }
+        const first = parsed.places[0]?.location ?? parsed.route.points[0];
+        if (first) setCenter(first);
+        setMapNotice(`'${parsed.route.name}' 루트를 지도에 표시했습니다. 여행지도 저장으로 함께 보관하세요.`);
       }
+      window.setTimeout(() => MapManager.getInstance().fitRouteBounds(), 0);
     } catch (err: unknown) {
       console.error('[노을-gpx] import failed', file.name, err);
       const message = err instanceof Error ? err.message : '루트 파일을 읽지 못했습니다.';
@@ -1136,7 +1161,7 @@ export default function HomePage() {
         sourceQuery: currentQuery || undefined,
         memo: mapMemo,
         checklist: mapChecklist,
-        route: currentRoute ?? undefined,
+        route: currentRoute,
       });
 
       if (!updated) {
@@ -1306,6 +1331,33 @@ export default function HomePage() {
     }
     setMapError('');
     setMapNotice(`'${map.title}' 여행지도를 삭제했습니다. 지금 화면의 장소는 그대로입니다.`);
+  };
+
+  const handleDeleteTravelMapRoute = (map: TravelMap) => {
+    if (!map.route) return;
+    const confirmed = window.confirm(
+      `'${map.title}'의 루트만 삭제할까요? 장소와 메모는 그대로입니다.`
+    );
+    if (!confirmed) return;
+
+    const updated = clearTravelMapRoute(map.id);
+    if (!updated) return;
+
+    setTravelMaps(updated);
+    if (loadedMapId === map.id) {
+      setCurrentRoute(null);
+      setIsFollowMode(false);
+      useLocationStore.getState().setFollowMode(false);
+      useLocationStore.getState().setCameraDebug(null);
+    }
+    setMapError('');
+    setMapNotice(`'${map.title}'의 루트를 삭제했습니다. 장소와 메모는 그대로입니다.`);
+  };
+
+  const handleImportRouteForMap = (map: TravelMap) => {
+    routeImportTargetMapIdRef.current = map.id;
+    handleLoadTravelMap(map);
+    handleImportRouteClick();
   };
 
   const persistMapNotes = (
@@ -1929,8 +1981,31 @@ export default function HomePage() {
                     <p className="mt-0.5 text-xs text-slate-500">
                       생성일 {formatMapDate(map.createdAt)}
                       {map.places.length > 0 ? ` · 장소 ${map.places.length}개` : ''}
-                      {map.route ? ' · 루트 있음' : ''}
+                      {map.route ? ' · 루트 있음' : ' · 루트 없음'}
                     </p>
+                    {map.route ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteTravelMapRoute(map);
+                        }}
+                        className="w-full mt-1 px-3 text-sm font-medium text-slate-800 bg-white border border-slate-400 rounded-lg min-h-10 hover:bg-slate-50"
+                      >
+                        루트 삭제
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleImportRouteForMap(map);
+                        }}
+                        className="w-full mt-1 px-3 text-sm font-medium text-slate-900 bg-white border border-slate-400 rounded-lg min-h-10 hover:bg-slate-50"
+                      >
+                        📁 루트 가져오기
+                      </button>
+                    )}
                     <div className="flex gap-1 mt-1">
                       <button
                         type="button"
