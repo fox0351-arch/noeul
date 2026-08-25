@@ -8,8 +8,7 @@ const CAMERA_MIN_INTERVAL_MS = 200;
 /** worker에서 안정화한 bearing을 카메라가 부드럽게 따라갑니다. */
 const CAMERA_HEADING_LERP = 0.12;
 const CAMERA_POSITION_LERP = 0.35;
-const MAX_TRACK_POINTS = 3000;
-const TRACK_MIN_STEP_M = 2;
+const MAX_TRACK_POINTS = 500;
 const USER_MARKER_SCALE = 8;
 const RETURN_MARKER_SCALE = 18;
 const ROUTE_STROKE_COLOR = '#FF0000';
@@ -17,8 +16,8 @@ const ROUTE_STROKE_WEIGHT = 6;
 const ROUTE_STROKE_OPACITY = 0.7;
 const RETURN_STROKE_COLOR = '#00FF66';
 const RETURN_STROKE_WEIGHT = 12;
-const TRACK_STROKE_COLOR = '#2563eb';
-const TRACK_STROKE_WEIGHT = 5;
+const TRACK_STROKE_COLOR = '#DC2626';
+const TRACK_STROKE_WEIGHT = 4;
 
 type MapWithCamera = google.maps.Map & {
   moveCamera?: (opts: {
@@ -513,18 +512,28 @@ export class MapManager {
         bearing: s.bearing,
         fromGps: s.fromGps,
         followMode: s.followMode,
+        debugTrackEnabled: s.debugTrackEnabled,
         recenterId: s.recenterId,
       }),
       (slice, prev) => {
         if (slice.lat != null && slice.lng != null) {
           this.syncUserMarker(slice.lat, slice.lng);
-          if (slice.fromGps && slice.followMode) {
+          if (slice.fromGps && slice.debugTrackEnabled) {
             this.appendTrackPoint({ lat: slice.lat, lng: slice.lng });
           }
         }
-        if (slice.followMode && !prev.followMode) {
+        if (slice.debugTrackEnabled && !prev.debugTrackEnabled) {
           this.trackPath = [];
           this.trackLine?.setPath([]);
+          this.trackLine?.setMap(this.map);
+        }
+        if (!slice.debugTrackEnabled && prev.debugTrackEnabled) {
+          this.trackPath = [];
+          this.trackLine?.setPath([]);
+          this.trackLine?.setMap(null);
+          this.trackLine = null;
+        }
+        if (slice.followMode && !prev.followMode) {
           this.moveCameraCount = 0;
           this.fitBoundsCount = 0;
           this.dragPauseUntil = 0;
@@ -712,9 +721,6 @@ export class MapManager {
   private appendTrackPoint(point: google.maps.LatLngLiteral): void {
     const map = this.map;
     if (!map || !window.google) return;
-    const last = this.trackPath[this.trackPath.length - 1];
-    if (last && metersBetween(last, point) < TRACK_MIN_STEP_M) return;
-
     this.trackPath.push(point);
     if (this.trackPath.length > MAX_TRACK_POINTS) {
       this.trackPath.splice(0, this.trackPath.length - MAX_TRACK_POINTS);

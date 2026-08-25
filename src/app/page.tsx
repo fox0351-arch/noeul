@@ -107,6 +107,7 @@ export default function HomePage() {
   const [offRouteLevel, setOffRouteLevel] = useState<OffRouteLevel>(0);
   const [isOnline, setIsOnline] = useState(true);
   const [batterySave, setBatterySave] = useState(false);
+  const [debugTrackEnabled, setDebugTrackEnabled] = useState(false);
   const [highContrast, setHighContrast] = useState(false);
   const [headingUpMode, setHeadingUpMode] = useState(true);
   const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>('female');
@@ -620,6 +621,13 @@ export default function HomePage() {
     store.setMapHeadingDeg(mapHeadingDeg);
     store.setRecenterId(recenterRequestId);
   }, [isFollowMode, headingUpMode, mapHeadingDeg, recenterRequestId]);
+
+  useEffect(() => {
+    useLocationStore.getState().setDebugTrackEnabled(debugTrackEnabled);
+    return () => {
+      useLocationStore.getState().setDebugTrackEnabled(false);
+    };
+  }, [debugTrackEnabled]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- 선택한 장소 설명을 불러옵니다 */
   useEffect(() => {
@@ -1949,18 +1957,32 @@ export default function HomePage() {
               className="hidden"
               onChange={handleImportRouteFile}
             />
-            <button
-              type="button"
-              onClick={handleToggleBatterySave}
-              aria-pressed={batterySave}
-              className={`status-chip mb-2 px-2 py-1 text-xs font-bold rounded-md border ${
-                batterySave
-                  ? 'text-amber-950 bg-amber-100 border-amber-400'
-                  : 'text-slate-600 bg-slate-100 border-slate-300'
-              }`}
-            >
-              {batterySave ? '🔋 절전 ON' : '🔋 절전 OFF'}
-            </button>
+            <div className="flex flex-wrap gap-2 mb-2">
+              <button
+                type="button"
+                onClick={handleToggleBatterySave}
+                aria-pressed={batterySave}
+                className={`status-chip px-2 py-1 text-xs font-bold rounded-md border ${
+                  batterySave
+                    ? 'text-amber-950 bg-amber-100 border-amber-400'
+                    : 'text-slate-600 bg-slate-100 border-slate-300'
+                }`}
+              >
+                {batterySave ? '🔋 절전 ON' : '🔋 절전 OFF'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDebugTrackEnabled((current) => !current)}
+                aria-pressed={debugTrackEnabled}
+                className={`status-chip px-2 py-1 text-xs font-bold rounded-md border ${
+                  debugTrackEnabled
+                    ? 'text-red-900 bg-red-100 border-red-400'
+                    : 'text-slate-600 bg-slate-100 border-slate-300'
+                }`}
+              >
+                {debugTrackEnabled ? '🔴 디버그 궤적 ON' : '⚪ 디버그 궤적 OFF'}
+              </button>
+            </div>
             <button
               type="button"
               onClick={handleToggleHighContrast}
