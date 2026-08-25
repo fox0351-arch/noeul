@@ -15,18 +15,31 @@ function isPlacePhoto(value: unknown): value is PlacePhoto {
   return typeof photo.id === 'string' && typeof photo.dataUrl === 'string' && photo.dataUrl.startsWith('data:image/');
 }
 
-function isPlaceItem(value: unknown): value is PlaceItem {
-  if (!value || typeof value !== 'object') return false;
+function coerceCoordinate(value: unknown): number | null {
+  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function coercePlaceItem(value: unknown): PlaceItem | null {
+  if (!value || typeof value !== 'object') return null;
   const place = value as PlaceItem;
-  return (
-    typeof place.id === 'string' &&
-    typeof place.name === 'string' &&
-    typeof place.address === 'string' &&
-    typeof place.location?.latitude === 'number' &&
-    typeof place.location?.longitude === 'number' &&
-    (place.memo === undefined || typeof place.memo === 'string') &&
-    (place.photos === undefined || Array.isArray(place.photos))
-  );
+  const latitude = coerceCoordinate(place.location?.latitude);
+  const longitude = coerceCoordinate(place.location?.longitude);
+  if (
+    typeof place.id !== 'string' ||
+    typeof place.name !== 'string' ||
+    typeof place.address !== 'string' ||
+    latitude === null ||
+    longitude === null
+  ) {
+    return null;
+  }
+  return {
+    ...place,
+    location: { latitude, longitude },
+    memo: typeof place.memo === 'string' ? place.memo : undefined,
+    photos: Array.isArray(place.photos) ? place.photos.filter(isPlacePhoto) : undefined,
+  };
 }
 
 function normalizePlaceItem(place: PlaceItem): PlaceItem {
@@ -46,20 +59,25 @@ function isChecklistItem(value: unknown): value is TravelMapChecklistItem {
   );
 }
 
-function isTravelMap(value: unknown): value is TravelMap {
-  if (!value || typeof value !== 'object') return false;
+function coerceTravelMap(value: unknown): TravelMap | null {
+  if (!value || typeof value !== 'object') return null;
   const map = value as TravelMap;
-  return (
-    typeof map.id === 'string' &&
-    typeof map.title === 'string' &&
-    typeof map.createdAt === 'string' &&
-    typeof map.updatedAt === 'string' &&
-    Array.isArray(map.places) &&
-    map.places.every(isPlaceItem) &&
-    (map.memo === undefined || typeof map.memo === 'string') &&
-    (map.checklist === undefined || (Array.isArray(map.checklist) && map.checklist.every(isChecklistItem))) &&
-    (map.route === undefined || isTravelRoute(map.route))
-  );
+  if (typeof map.id !== 'string' || typeof map.title !== 'string' || typeof map.createdAt !== 'string') {
+    return null;
+  }
+  const places = Array.isArray(map.places)
+    ? map.places.map(coercePlaceItem).filter((place): place is PlaceItem => place !== null)
+    : [];
+  const route = map.route && isTravelRoute(map.route) ? map.route : undefined;
+  if (places.length === 0 && !route) return null;
+  return {
+    ...map,
+    places,
+    updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : map.createdAt,
+    memo: typeof map.memo === 'string' ? map.memo : undefined,
+    checklist: Array.isArray(map.checklist) ? map.checklist.filter(isChecklistItem) : undefined,
+    route,
+  };
 }
 
 function emptyStore(): TravelMapStore {
@@ -81,10 +99,13 @@ function readStore(): TravelMapStore {
 
     return {
       version: 1,
-      maps: mapsValue.filter(isTravelMap).map((map) => ({
-        ...map,
-        places: map.places.map(normalizePlaceItem),
-      })),
+      maps: mapsValue
+        .map(coerceTravelMap)
+        .filter((map): map is TravelMap => map !== null)
+        .map((map) => ({
+          ...map,
+          places: map.places.map(normalizePlaceItem),
+        })),
     };
   } catch {
     return emptyStore();
@@ -238,14 +259,18 @@ function parseBackupStore(value: unknown): TravelMapStore | null {
 
   const record = value as { version?: unknown; maps?: unknown };
   if (record.version !== 1 || !Array.isArray(record.maps)) return null;
-  if (!record.maps.every(isTravelMap)) return null;
+  const maps = record.maps
+    .map(coerceTravelMap)
+    .filter((map): map is TravelMap => map !== null)
+    .map((map) => ({
+      ...map,
+      places: map.places.map(normalizePlaceItem),
+    }));
+  if (maps.length === 0) return null;
 
   return {
     version: 1,
-    maps: (record.maps as TravelMap[]).map((map) => ({
-      ...map,
-      places: map.places.map(normalizePlaceItem),
-    })),
+    maps,
   };
 }
 

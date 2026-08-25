@@ -191,7 +191,6 @@ export default function HomePage() {
   useEffect(() => {
     setManualPlaces(loadManualPlaces());
     setHasLoadedManualPlaces(true);
-    setTravelMaps(loadTravelMaps());
     setBatterySave(loadBatterySave());
     setGuardianPhone(loadGuardianPhone());
     const prefs = loadUserSettings();
@@ -220,13 +219,58 @@ export default function HomePage() {
       });
     }
 
+    let maps = loadTravelMaps();
     const session = loadActiveRouteSession();
     if (session) {
+      const sessionTitle = session.title.trim() || session.route.name;
+      let match =
+        (session.mapId ? maps.find((map) => map.id === session.mapId) : undefined)
+        ?? maps.find((map) => map.title === sessionTitle && Boolean(map.route));
+      if (!match) {
+        if (!session.mapId) {
+          const now = new Date().toISOString();
+          const recovered: TravelMap = {
+            id: createTravelMapId(),
+            title: sessionTitle,
+            createdAt: now,
+            updatedAt: now,
+            places: session.places.map((place) => ({ ...place })),
+            sourceQuery: session.query || sessionTitle,
+            route: session.route,
+          };
+          maps = saveTravelMap(recovered);
+          match = recovered;
+        }
+      } else if (!match.route) {
+        const matchedId = match.id;
+        const updated = updateTravelMap(matchedId, {
+          title: match.title,
+          places: match.places,
+          sourceQuery: match.sourceQuery,
+          memo: match.memo,
+          checklist: match.checklist,
+          route: session.route,
+        });
+        if (updated) {
+          maps = updated;
+          match = updated.find((map) => map.id === matchedId) ?? match;
+        }
+      }
+      setTravelMaps(maps);
       setCurrentRoute(session.route);
       setPlaces(session.places);
       setHideManualExtras(true);
-      setMapTitle(session.title);
+      setMapTitle(sessionTitle);
       setCurrentQuery(session.query);
+      if (match) {
+        setLoadedMapId(match.id);
+        setSelectedSavedMapId(match.id);
+        setMapMemo(match.memo ?? '');
+        setMapChecklist(withPresetChecklistTexts(match.checklist ?? []));
+      } else {
+        setLoadedMapId(null);
+        setSelectedSavedMapId(null);
+      }
       if (session.places[0]) {
         setCenter(session.places[0].location);
       } else if (session.route.points[0]) {
@@ -235,6 +279,8 @@ export default function HomePage() {
       if ((session.route.points.length ?? 0) >= 2) {
         window.setTimeout(() => MapManager.getInstance().fitRouteBounds(), 0);
       }
+    } else {
+      setTravelMaps(maps);
     }
     setNavSessionReady(true);
 
@@ -303,11 +349,12 @@ export default function HomePage() {
         places: displayedPlaces,
         title: mapTitle.trim() || currentRoute.name,
         query: currentQuery || currentRoute.name,
+        mapId: loadedMapId ?? undefined,
       });
       return;
     }
     saveActiveRouteSession(null);
-  }, [navSessionReady, currentRoute, displayedPlaces, mapTitle, currentQuery]);
+  }, [navSessionReady, currentRoute, displayedPlaces, mapTitle, currentQuery, loadedMapId]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- 장소 수에 맞춰 목록 접힘만 맞춥니다 */
   useEffect(() => {
@@ -889,14 +936,36 @@ export default function HomePage() {
         });
         if (updated) setTravelMaps(updated);
       } else {
+        const title = mapTitle.trim() || parsed.route.name;
+        const now = new Date().toISOString();
+        const nextMap: TravelMap = {
+          id: createTravelMapId(),
+          title,
+          createdAt: now,
+          updatedAt: now,
+          places: parsed.places,
+          sourceQuery: parsed.route.name,
+          memo: mapMemo,
+          checklist: mapChecklist,
+          route: parsed.route,
+        };
         setPlaces(parsed.places);
         setCurrentQuery(parsed.route.name);
-        if (!mapTitle.trim()) {
-          setMapTitle(parsed.route.name);
-        }
+        setMapTitle(title);
+        setLoadedMapId(nextMap.id);
+        setSelectedSavedMapId(nextMap.id);
         const first = parsed.places[0]?.location ?? parsed.route.points[0];
         if (first) setCenter(first);
-        setMapNotice(`'${parsed.route.name}' 루트를 지도에 표시했습니다. 여행지도 저장으로 함께 보관하세요.`);
+        try {
+          setTravelMaps(saveTravelMap(nextMap));
+          setMapNotice(`'${title}' 여행지도에 루트를 저장했습니다. 루트만 바꾸려면 루트 삭제를 누르세요.`);
+        } catch (error) {
+          if (isQuotaExceeded(error)) {
+            setMapError('용량이 부족해 여행지도를 저장하지 못했습니다. 루트는 화면에 있습니다.');
+          } else {
+            setMapNotice(`'${parsed.route.name}' 루트를 지도에 표시했습니다. 여행지도 저장으로 함께 보관하세요.`);
+          }
+        }
       }
       window.setTimeout(() => MapManager.getInstance().fitRouteBounds(), 0);
     } catch (err: unknown) {
@@ -1339,19 +1408,33 @@ export default function HomePage() {
       `'${map.title}'의 루트만 삭제할까요? 장소와 메모는 그대로입니다.`
     );
     if (!confirmed) return;
+    applyRouteRemoval(map.id, map.title, loadedMapId === map.id);
+  };
 
-    const updated = clearTravelMapRoute(map.id);
-    if (!updated) return;
+  const handleDeleteCurrentRoute = () => {
+    if (!currentRoute || currentRoute.points.length < 2) return;
+    const title = mapTitle.trim() || currentRoute.name;
+    const confirmed = window.confirm(
+      `'${title}'의 루트만 삭제할까요? 장소와 메모는 그대로입니다.`
+    );
+    if (!confirmed) return;
+    applyRouteRemoval(loadedMapId, title, true);
+  };
 
-    setTravelMaps(updated);
-    if (loadedMapId === map.id) {
+  const applyRouteRemoval = (mapId: string | null, title: string, clearScreen: boolean) => {
+    if (mapId) {
+      const updated = clearTravelMapRoute(mapId);
+      if (updated) setTravelMaps(updated);
+    }
+    if (clearScreen) {
       setCurrentRoute(null);
       setIsFollowMode(false);
       useLocationStore.getState().setFollowMode(false);
       useLocationStore.getState().setCameraDebug(null);
+      saveActiveRouteSession(null);
     }
     setMapError('');
-    setMapNotice(`'${map.title}'의 루트를 삭제했습니다. 장소와 메모는 그대로입니다.`);
+    setMapNotice(`'${title}'의 루트를 삭제했습니다. 장소와 메모는 그대로입니다.`);
   };
 
   const handleImportRouteForMap = (map: TravelMap) => {
@@ -1962,6 +2045,15 @@ export default function HomePage() {
                 {isFollowMode ? '🚶 따라가기 종료' : '🚶 루트 따라가기'}
               </button>
             </div>
+            {(currentRoute?.points.length ?? 0) >= 2 && (
+              <button
+                type="button"
+                onClick={handleDeleteCurrentRoute}
+                className="w-full mb-2 px-3 text-sm font-medium text-slate-800 bg-white border border-slate-400 rounded-lg min-h-10 hover:bg-slate-50"
+              >
+                루트 삭제
+              </button>
+            )}
 
             {travelMaps.length === 0 ? (
               <p className="text-xs text-slate-400">저장된 여행지도가 없습니다.</p>

@@ -8,6 +8,7 @@ export interface ActiveRouteSession {
   places: PlaceItem[];
   title: string;
   query: string;
+  mapId?: string;
 }
 
 function stripPhotos(places: PlaceItem[]): PlaceItem[] {
@@ -41,6 +42,7 @@ export function saveActiveRouteSession(session: ActiveRouteSession | null): void
       places: stripPhotos(session.places),
       title: session.title,
       query: session.query,
+      mapId: session.mapId,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch {
@@ -63,6 +65,7 @@ export function loadActiveRouteSession(): ActiveRouteSession | null {
       places: session.places,
       title: typeof session.title === 'string' ? session.title : session.route.name,
       query: typeof session.query === 'string' ? session.query : session.route.name,
+      mapId: typeof session.mapId === 'string' ? session.mapId : undefined,
     };
   } catch {
     return null;
