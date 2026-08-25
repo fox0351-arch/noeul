@@ -37,7 +37,6 @@ type LocationState = {
   fromGps: boolean;
   followMode: boolean;
   headingUp: boolean;
-  debugTrackEnabled: boolean;
   mapHeadingDeg: number | null;
   recenterId: number;
   arrowRotationOffset: number;
@@ -45,7 +44,6 @@ type LocationState = {
   applyFix: (fix: LocationFixInput) => void;
   setFollowMode: (followMode: boolean) => void;
   setHeadingUp: (headingUp: boolean) => void;
-  setDebugTrackEnabled: (debugTrackEnabled: boolean) => void;
   setMapHeadingDeg: (mapHeadingDeg: number | null) => void;
   bumpRecenter: () => void;
   setRecenterId: (recenterId: number) => void;
@@ -64,7 +62,6 @@ export const useLocationStore = create<LocationState>()(
     fromGps: false,
     followMode: false,
     headingUp: true,
-    debugTrackEnabled: false,
     mapHeadingDeg: null,
     recenterId: 0,
     arrowRotationOffset: 0,
@@ -81,7 +78,6 @@ export const useLocationStore = create<LocationState>()(
       }),
     setFollowMode: (followMode) => set({ followMode }),
     setHeadingUp: (headingUp) => set({ headingUp }),
-    setDebugTrackEnabled: (debugTrackEnabled) => set({ debugTrackEnabled }),
     setMapHeadingDeg: (mapHeadingDeg) => set({ mapHeadingDeg }),
     bumpRecenter: () => set((s) => ({ recenterId: s.recenterId + 1 })),
     setRecenterId: (recenterId) => set({ recenterId }),
