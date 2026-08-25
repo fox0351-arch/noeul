@@ -7,8 +7,6 @@ const WALK_ZOOM = 18;
 const CAMERA_MIN_INTERVAL_MS = 200;
 const MAX_TRACK_POINTS = 3000;
 const TRACK_MIN_STEP_M = 2;
-/** FORWARD_CLOSED_ARROW 기본 꼭짓점이 옆을 향하므로 진행 방향에 맞춥니다. */
-const ARROW_ASSET_ROTATION_DEG = -90;
 const USER_MARKER_SCALE = 12;
 const RETURN_MARKER_SCALE = 18;
 const ROUTE_STROKE_COLOR = '#FF0000';
@@ -70,16 +68,21 @@ export function exitBrowserFullscreen(): void {
   }
 }
 
+function wrapHeading(value: number): number {
+  return ((value % 360) + 360) % 360;
+}
+
+/** rotation 0 = 지리 북쪽. 헤딩업 카메라와 같은 방위를 넣으면 화면 위를 가리킵니다. */
 function headingArrowIcon(rotation: number): google.maps.Symbol {
   return {
-    path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-    scale: 7,
+    path: 'M 0,-3.2 L 2.1,2.6 L 0,1.2 L -2.1,2.6 z',
+    scale: 2.2,
     fillColor: '#1d4ed8',
     fillOpacity: 1,
     strokeColor: '#ffffff',
-    strokeWeight: 2,
-    rotation,
-    anchor: new google.maps.Point(0, 2.4),
+    strokeWeight: 1.2,
+    rotation: wrapHeading(rotation),
+    anchor: new google.maps.Point(0, 0.4),
   };
 }
 
@@ -575,13 +578,14 @@ export class MapManager {
     if (Date.now() < this.dragPauseUntil) return;
 
     const user: PlaceLocation = { latitude: state.lat, longitude: state.lng };
-    const headingSource = state.headingUp ? (state.bearing ?? state.mapHeadingDeg) : 0;
-    const heading =
-      headingSource != null && Number.isFinite(headingSource) ? headingSource : 0;
+    const travel =
+      state.bearing != null && Number.isFinite(state.bearing) ? state.bearing : null;
+    const heading = state.headingUp && travel != null ? travel : 0;
     const mapH = map.getDiv()?.clientHeight || 640;
-    const target = state.headingUp
-      ? lookAhead(user, heading, mapH, WALK_ZOOM)
-      : { lat: user.latitude, lng: user.longitude };
+    const target =
+      state.headingUp && travel != null
+        ? lookAhead(user, heading, mapH, WALK_ZOOM)
+        : { lat: user.latitude, lng: user.longitude };
 
     if (this.renderedLat == null || this.renderedLng == null) {
       this.renderedLat = target.lat;
@@ -590,7 +594,7 @@ export class MapManager {
     } else {
       this.renderedLat = lerp(this.renderedLat, target.lat, 0.55);
       this.renderedLng = lerp(this.renderedLng, target.lng, 0.55);
-      this.renderedHeading = lerpHeading(this.renderedHeading, heading, 0.42);
+      this.renderedHeading = lerpHeading(this.renderedHeading, heading, 0.32);
     }
 
     const moved = this.moveCameraOnce({
@@ -601,14 +605,20 @@ export class MapManager {
     });
     if (!moved) return;
 
+    const arrowApplied =
+      travel != null
+        ? wrapHeading(
+            (state.headingUp ? this.renderedHeading : travel) + state.arrowRotationOffset
+          )
+        : null;
+    if (arrowApplied != null) {
+      this.renderedMarkerHeading = arrowApplied;
+      this.headingMarker?.setIcon(headingArrowIcon(arrowApplied));
+    }
+
     const center = map.getCenter();
     const mapCenterLat = center?.lat() ?? this.renderedLat;
     const mapCenterLng = center?.lng() ?? this.renderedLng;
-    const arrowApplied =
-      state.bearing != null && Number.isFinite(state.bearing)
-        ? (((state.bearing + ARROW_ASSET_ROTATION_DEG + state.arrowRotationOffset) % 360) + 360) % 360
-        : null;
-
     const debug: FollowCameraDebug = {
       followMode: true,
       setCenterCount: 0,
@@ -706,9 +716,13 @@ export class MapManager {
     }
 
     if (bearing == null || !Number.isFinite(bearing)) return;
-    const target = (((bearing + ARROW_ASSET_ROTATION_DEG + arrowOffset) % 360) + 360) % 360;
+    const headingUp = useLocationStore.getState().headingUp;
+    const followMode = useLocationStore.getState().followMode;
+    const target = wrapHeading(bearing + arrowOffset);
     if (this.renderedMarkerHeading == null) this.renderedMarkerHeading = target;
-    else this.renderedMarkerHeading = lerpHeading(this.renderedMarkerHeading, target, 0.4);
+    else if (!followMode || !headingUp) {
+      this.renderedMarkerHeading = lerpHeading(this.renderedMarkerHeading, target, 0.35);
+    }
     const arrowApplied = this.renderedMarkerHeading;
     if (!this.headingMarker) {
       this.headingMarker = new google.maps.Marker({
@@ -719,10 +733,12 @@ export class MapManager {
         zIndex: 11,
         icon: headingArrowIcon(arrowApplied),
       });
-    } else {
-      this.headingMarker.setPosition(position);
+      return;
+    }
+    this.headingMarker.setPosition(position);
+    this.headingMarker.setMap(map);
+    if (!followMode || !headingUp) {
       this.headingMarker.setIcon(headingArrowIcon(arrowApplied));
-      this.headingMarker.setMap(map);
     }
   }
 

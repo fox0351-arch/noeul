@@ -31,11 +31,11 @@ export class KalmanFilter1D {
 
 /** 위도·경도를 각각 칼만 필터로 다듬습니다. 정확도가 나쁠수록 새 점을 덜 믿습니다. */
 export class GpsKalmanFilter {
-  private readonly latFilter = new KalmanFilter1D(6e-8, 4e-9);
-  private readonly lngFilter = new KalmanFilter1D(6e-8, 4e-9);
+  private readonly latFilter = new KalmanFilter1D(2e-8, 4e-9);
+  private readonly lngFilter = new KalmanFilter1D(2e-8, 4e-9);
 
   update(lat: number, lng: number, accuracyM: number): { lat: number; lng: number } {
-    const r = Math.max(0.35, accuracyM / 22) ** 2 * 4e-9;
+    const r = Math.max(0.5, accuracyM / 18) ** 2 * 4e-9;
     return {
       lat: this.latFilter.update(lat, r),
       lng: this.lngFilter.update(lng, r),

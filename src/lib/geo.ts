@@ -137,7 +137,10 @@ export const MAX_ACCEPT_GPS_ACCURACY_M = 40;
 export const GPS_JUMP_MIN_M = 28;
 export const GPS_JUMP_MAX_MPS = 5;
 export const GPS_SMOOTH_COUNT = 2;
-export const MIN_HEADING_MOVE_M = 1.5;
+/** 이보다 짧게 움직이면 화살표를 고정합니다. GPS ±5~10m보다 긴 구간이어야 옆으로 눕지 않습니다. */
+export const MIN_HEADING_MOVE_M = 10;
+/** 한 번에 이보다 크게 꺾이면 GPS 튕김으로 보고 이번 값은 버립니다. */
+export const MAX_HEADING_STEP_DEG = 75;
 export const MIN_MAP_ROTATE_KMH = 1;
 export const STOP_MAP_ROTATE_KMH = 0.7;
 

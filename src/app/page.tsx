@@ -203,7 +203,7 @@ export default function HomePage() {
     setHeadingUpMode(prefs.headingUp);
     setActiveVoiceStyle(prefs.voiceStyle);
     warmSpeechVoices();
-    const storedArrow = window.localStorage.getItem('noeul.arrowRotationOffset.v1');
+    const storedArrow = window.localStorage.getItem('noeul.arrowRotationOffset.v2');
     const parsedArrow = storedArrow == null ? NaN : Number(storedArrow);
     if (ARROW_ROTATION_OFFSETS.includes(parsedArrow as (typeof ARROW_ROTATION_OFFSETS)[number])) {
       setArrowRotationOffset(parsedArrow);
@@ -1538,7 +1538,7 @@ export default function HomePage() {
               );
               const next = ARROW_ROTATION_OFFSETS[(idx + 1) % ARROW_ROTATION_OFFSETS.length];
               setArrowRotationOffset(next);
-              window.localStorage.setItem('noeul.arrowRotationOffset.v1', String(next));
+              window.localStorage.setItem('noeul.arrowRotationOffset.v2', String(next));
             }}
           >
             화살표 보정
