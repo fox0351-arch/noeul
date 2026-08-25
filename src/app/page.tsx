@@ -40,7 +40,6 @@ import {
 import { batteryBand, subscribeBattery, type BatteryLevelBand } from '@/lib/batteryStatus';
 import { loadLastGps, saveLastGps, lastGpsToLocation } from '@/lib/lastGps';
 import { loadGuardianPhone, saveGuardianPhone } from '@/lib/guardianStorage';
-import { FIELD_TEST_ITEMS, loadFieldTestChecks, saveFieldTestChecks } from '@/lib/fieldTestChecklist';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
 import { loadUserSettings, saveUserSettings, type VoiceStyle } from '@/lib/userData';
 import MapDomView, { ARROW_ROTATION_OFFSETS } from '@/components/MapDomView';
@@ -115,8 +114,6 @@ export default function HomePage() {
   const [isSosShareOpen, setIsSosShareOpen] = useState(false);
   const [sosNotice, setSosNotice] = useState('');
   const [guardianPhone, setGuardianPhone] = useState('');
-  const [fieldChecks, setFieldChecks] = useState<Record<string, boolean>>({});
-  const [isFieldTestOpen, setIsFieldTestOpen] = useState(false);
   const [navSessionReady, setNavSessionReady] = useState(false);
   const [recenterRequestId, setRecenterRequestId] = useState(0);
   const [locateToast, setLocateToast] = useState('');
@@ -197,7 +194,6 @@ export default function HomePage() {
     setTravelMaps(loadTravelMaps());
     setBatterySave(loadBatterySave());
     setGuardianPhone(loadGuardianPhone());
-    setFieldChecks(loadFieldTestChecks());
     const prefs = loadUserSettings();
     setVoiceStyle(prefs.voiceStyle);
     setHeadingUpMode(prefs.headingUp);
@@ -946,7 +942,6 @@ export default function HomePage() {
     setIsFollowMode(true);
     setRecenterRequestId((id) => id + 1);
     setIsPlaceListCollapsed(true);
-    setIsFieldTestOpen(false);
     const seconds = batterySave ? 10 : 1;
     setMapNotice(
       navigator.onLine
@@ -969,14 +964,6 @@ export default function HomePage() {
       const next = !current;
       window.localStorage.setItem('noeul.highContrast.v1', next ? '1' : '0');
       document.documentElement.classList.toggle('high-contrast', next);
-      return next;
-    });
-  };
-
-  const handleToggleFieldCheck = (id: string) => {
-    setFieldChecks((current) => {
-      const next = { ...current, [id]: !current[id] };
-      saveFieldTestChecks(next);
       return next;
     });
   };
@@ -1842,37 +1829,39 @@ export default function HomePage() {
               className="hidden"
               onChange={handleImportRouteFile}
             />
-            <button
-              type="button"
-              onClick={handleImportRouteClick}
-              className="w-full mb-2 px-3 text-base font-bold text-slate-900 bg-white border-2 border-slate-400 rounded-lg min-h-12 hover:bg-slate-50"
-            >
-              📂 루트 가져오기
-            </button>
             </div>
-            <button
-              type="button"
-              onClick={handleToggleFollowRoute}
-              className={`w-full mb-2 px-3 text-base font-bold rounded-lg min-h-12 ${
-                isFollowMode
-                  ? 'text-white bg-blue-800 hover:bg-blue-900'
-                  : 'text-white bg-blue-600 hover:bg-blue-700'
-              }`}
-            >
-              {isFollowMode ? '🚶 따라가기 종료' : '🚶 루트 따라가기'}
-            </button>
+            <div className="flex gap-2 mb-2">
+              <button
+                type="button"
+                onClick={handleImportRouteClick}
+                className="flex-1 min-w-0 px-2 text-sm font-bold text-slate-900 bg-white border-2 border-slate-400 rounded-lg min-h-12 hover:bg-slate-50"
+              >
+                📂 루트 가져오기
+              </button>
+              <button
+                type="button"
+                onClick={handleToggleFollowRoute}
+                className={`flex-1 min-w-0 px-2 text-sm font-bold rounded-lg min-h-12 ${
+                  isFollowMode
+                    ? 'text-white bg-blue-800 hover:bg-blue-900'
+                    : 'text-white bg-blue-600 hover:bg-blue-700'
+                }`}
+              >
+                {isFollowMode ? '🚶 따라가기 종료' : '🚶 루트 따라가기'}
+              </button>
+            </div>
             <div className="hiking-hide">
             <button
               type="button"
               onClick={handleToggleBatterySave}
               aria-pressed={batterySave}
-              className={`w-full mb-2 px-3 text-xl font-black rounded-lg min-h-12 border-2 ${
+              className={`status-chip mb-2 px-2 py-1 text-xs font-bold rounded-md border ${
                 batterySave
-                  ? 'text-amber-950 bg-amber-200 border-amber-500'
-                  : 'text-slate-800 bg-white border-slate-400'
+                  ? 'text-amber-950 bg-amber-100 border-amber-400'
+                  : 'text-slate-600 bg-slate-100 border-slate-300'
               }`}
             >
-              {batterySave ? '배터리 절약 켜짐 (10초)' : '배터리 절약 꺼짐 (2초)'}
+              {batterySave ? '🔋 절전 ON' : '🔋 절전 OFF'}
             </button>
             <button
               type="button"
@@ -1933,33 +1922,6 @@ export default function HomePage() {
                 저장
               </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsFieldTestOpen((open) => !open)}
-              className="w-full mb-3 px-3 text-base font-bold text-slate-900 bg-white border-2 border-slate-500 rounded-lg min-h-12"
-            >
-              {isFieldTestOpen ? '현장 테스트 닫기' : '현장 테스트 체크리스트'}
-            </button>
-            {isFieldTestOpen && (
-              <div className="p-3 mb-3 bg-white border-2 border-slate-400 rounded-lg">
-                <p className="mb-2 text-xl font-black text-slate-900">갈맷길 · 제주올레 · 둘레길</p>
-                <ul className="space-y-2">
-                  {FIELD_TEST_ITEMS.map((item) => (
-                    <li key={item.id}>
-                      <label className="flex items-center gap-3 text-base font-bold min-h-12">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(fieldChecks[item.id])}
-                          onChange={() => handleToggleFieldCheck(item.id)}
-                          className="w-6 h-6"
-                        />
-                        {item.label}
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
             <div className="flex gap-2 mb-3 shrink-0">
               <button
                 type="button"

@@ -143,6 +143,13 @@ html.high-contrast button {
   border-width: 3px;
 }
 
+html.high-contrast button.status-chip,
+button.status-chip {
+  min-height: 28px;
+  font-size: 12px;
+  border-width: 1px;
+}
+
 @media (max-width: 767px) {
   .hiking-mode .map-pane {
     flex: 1 1 auto !important;
