@@ -1829,28 +1829,6 @@ export default function HomePage() {
               className="hidden"
               onChange={handleImportRouteFile}
             />
-            </div>
-            <div className="flex gap-2 mb-2">
-              <button
-                type="button"
-                onClick={handleImportRouteClick}
-                className="flex-1 min-w-0 px-2 text-sm font-bold text-slate-900 bg-white border-2 border-slate-400 rounded-lg min-h-12 hover:bg-slate-50"
-              >
-                📂 루트 가져오기
-              </button>
-              <button
-                type="button"
-                onClick={handleToggleFollowRoute}
-                className={`flex-1 min-w-0 px-2 text-sm font-bold rounded-lg min-h-12 ${
-                  isFollowMode
-                    ? 'text-white bg-blue-800 hover:bg-blue-900'
-                    : 'text-white bg-blue-600 hover:bg-blue-700'
-                }`}
-              >
-                {isFollowMode ? '🚶 따라가기 종료' : '🚶 루트 따라가기'}
-              </button>
-            </div>
-            <div className="hiking-hide">
             <button
               type="button"
               onClick={handleToggleBatterySave}
@@ -1961,7 +1939,42 @@ export default function HomePage() {
                       {map.places.length > 0 ? ` · 장소 ${map.places.length}개` : ''}
                       {map.route ? ' · 루트 있음' : ''}
                     </p>
-                    <div className="flex gap-2 mt-2">
+                    {loadedMapId === map.id && (
+                      <p className="mt-1 text-xs font-semibold text-slate-700">
+                        {map.route
+                          ? `'${map.title}' 여행지도와 루트를 불러왔습니다.`
+                          : `'${map.title}' 여행지도를 불러왔습니다.`}
+                      </p>
+                    )}
+                    <div className="flex gap-1 mt-1">
+                      <button
+                        type="button"
+                        disabled={loadedMapId !== map.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleImportRouteClick();
+                        }}
+                        className="flex-1 min-w-0 px-1.5 text-xs font-bold text-slate-900 bg-white border border-slate-400 rounded-md min-h-10 hover:bg-slate-50 disabled:text-slate-400 disabled:bg-slate-100 disabled:border-slate-200 disabled:hover:bg-slate-100"
+                      >
+                        📁 루트 가져오기
+                      </button>
+                      <button
+                        type="button"
+                        disabled={loadedMapId !== map.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleFollowRoute();
+                        }}
+                        className={`flex-1 min-w-0 px-1.5 text-xs font-bold rounded-md min-h-10 disabled:text-slate-400 disabled:bg-slate-100 disabled:hover:bg-slate-100 ${
+                          isFollowMode && loadedMapId === map.id
+                            ? 'text-white bg-blue-800 hover:bg-blue-900'
+                            : 'text-white bg-blue-600 hover:bg-blue-700 disabled:bg-slate-100'
+                        }`}
+                      >
+                        {isFollowMode && loadedMapId === map.id ? '🚶 따라가기 종료' : '🚶 루트 따라가기'}
+                      </button>
+                    </div>
+                    <div className="flex gap-1 mt-1">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -1969,7 +1982,7 @@ export default function HomePage() {
                           setSelectedSavedMapId(map.id);
                           handleLoadTravelMap(map);
                         }}
-                        className="flex-1 px-3 text-sm font-medium text-white rounded-lg min-h-12 bg-blue-600 hover:bg-blue-700"
+                        className="flex-1 px-3 text-sm font-medium text-white rounded-lg min-h-10 bg-blue-600 hover:bg-blue-700"
                       >
                         불러오기{map.route ? ' (루트)' : ''}
                       </button>
@@ -1980,7 +1993,7 @@ export default function HomePage() {
                           setSelectedSavedMapId(map.id);
                           handleDeleteTravelMap(map);
                         }}
-                        className="flex-1 px-3 text-sm font-medium text-red-600 border border-red-200 rounded-lg min-h-12 hover:bg-red-50"
+                        className="flex-1 px-3 text-sm font-medium text-red-600 border border-red-200 rounded-lg min-h-10 hover:bg-red-50"
                       >
                         삭제
                       </button>
@@ -1990,6 +2003,15 @@ export default function HomePage() {
               </div>
             )}
             </div>
+            {isFollowMode && (
+              <button
+                type="button"
+                onClick={handleToggleFollowRoute}
+                className="w-full mt-1 px-2 text-sm font-bold text-white rounded-md min-h-10 bg-blue-800"
+              >
+                🚶 따라가기 종료
+              </button>
+            )}
           </div>
 
         <div className="relative isolate w-full min-h-0 overflow-hidden workspace-map map-pane">
