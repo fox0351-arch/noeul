@@ -1,6 +1,6 @@
 // Wake Lock는 페이지(WakeLockProvider)가 담당합니다. SW는 화면을 켜 둘 수 없습니다.
 // 대신 오래된 지도 스크립트를 붙잡지 않고, 관리자 시뮬 HTML을 홈 캐시에 덮어쓰지 않습니다.
-const CACHE_NAME = 'noeul-walk-v6';
+const CACHE_NAME = 'noeul-walk-v7';
 const PRECACHE = [
   '/',
   '/manifest.json',

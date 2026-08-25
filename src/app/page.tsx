@@ -221,7 +221,7 @@ export default function HomePage() {
       useLocationStore.getState().applyFix({
         lat: lastFix.latitude,
         lng: lastFix.longitude,
-        bearing: lastFix.heading,
+        bearing: null,
         accuracy: lastFix.accuracyM,
         speedKmh: null,
         timestamp: Date.now(),
@@ -929,10 +929,6 @@ export default function HomePage() {
       lastFixAtRef.current = Date.now();
       setUserLocation(loc);
       setGpsAccuracyM(last.accuracyM);
-      setHeadingDeg(last.heading);
-      mapHeadingRef.current = last.heading;
-      setMapHeadingDeg(last.heading);
-      lastGoodHeadingRef.current = last.heading ?? lastGoodHeadingRef.current;
       useLocationStore.getState().applyFix({
         lat: loc.latitude,
         lng: loc.longitude,
@@ -946,7 +942,6 @@ export default function HomePage() {
     mapRotatingRef.current = false;
     setHeadingUpMode(true);
     saveUserSettings({ headingUp: true });
-    lastGoodHeadingRef.current = last?.heading ?? lastGoodHeadingRef.current;
     warmSpeechVoices();
     setIsFollowMode(true);
     setRecenterRequestId((id) => id + 1);
