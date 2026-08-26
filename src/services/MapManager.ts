@@ -121,6 +121,7 @@ export class MapManager {
   private lastRotationLogAt = 0;
   private unsubscribeStore: (() => void) | null = null;
   private moveCameraCount = 0;
+  private moveCameraInvocationCount = 0;
   private fitBoundsCount = 0;
   private fabRoot: HTMLDivElement | null = null;
   private locateBtn: HTMLButtonElement | null = null;
@@ -527,6 +528,7 @@ export class MapManager {
           this.trackPath = [];
           this.trackLine?.setPath([]);
           this.moveCameraCount = 0;
+          this.moveCameraInvocationCount = 0;
           this.fitBoundsCount = 0;
           this.dragPauseUntil = 0;
           this.lastCameraAt = 0;
@@ -692,12 +694,19 @@ export class MapManager {
       error: null,
     });
     try {
-      moveCamera({
+      const cameraOptions = {
         center: { lat: opts.lat, lng: opts.lng },
         zoom: opts.zoom,
         heading: opts.heading,
         tilt: 0,
+      };
+      this.moveCameraInvocationCount += 1;
+      console.info('[노을-moveCamera/rotation]', {
+        headingBeforeCall: opts.heading,
+        headingAtCall: cameraOptions.heading,
+        moveCameraCallCount: this.moveCameraInvocationCount,
       });
+      moveCamera(cameraOptions);
       console.info('[노을-moveCamera/after]', {
         timestamp: new Date().toISOString(),
         ...logBase,
