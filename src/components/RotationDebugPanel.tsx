@@ -31,6 +31,10 @@ export default function RotationDebugPanel() {
             headingAtCall:{formatHeading(log.headingAtCall)}{' '}
             moveCameraCallCount:{log.moveCameraCallCount} GPS bearing:
             {formatHeading(log.gpsBearing)} renderedHeading:{formatHeading(log.renderedHeading)}
+            <br />
+            map.getHeading():{formatHeading(log.mapHeadingAfterCall)} map.getTilt():
+            {formatHeading(log.mapTiltAfterCall)} map.getRenderingType():
+            {log.renderingTypeAfterCall ?? 'null'}
           </p>
         ))
       )}

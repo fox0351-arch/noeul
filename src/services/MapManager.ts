@@ -36,6 +36,9 @@ export type RotationCameraLog = {
   moveCameraCallCount: number;
   gpsBearing: number | null;
   renderedHeading: number;
+  mapHeadingAfterCall: number | null;
+  mapTiltAfterCall: number | null;
+  renderingTypeAfterCall: string | null;
 };
 
 function lerp(a: number, b: number, t: number): number {
@@ -726,15 +729,32 @@ export class MapManager {
         headingAtCall: cameraOptions.heading,
         moveCameraCallCount: this.moveCameraInvocationCount,
       });
-      this.appendRotationLog({
-        timestamp: Date.now(),
-        headingBeforeCall: opts.heading,
-        headingAtCall: cameraOptions.heading,
-        moveCameraCallCount: this.moveCameraInvocationCount,
-        gpsBearing: state.bearing,
-        renderedHeading: this.renderedHeading,
-      });
       moveCamera(cameraOptions);
+      try {
+        const mapHeadingAfterCall = map.getHeading() ?? null;
+        const mapTiltAfterCall = map.getTilt() ?? null;
+        const renderingType = map.getRenderingType();
+        const renderingTypeAfterCall = renderingType == null ? null : String(renderingType);
+        console.info('[노을-moveCamera/map-state]', {
+          requestedHeading: cameraOptions.heading,
+          mapHeadingAfterCall,
+          mapTiltAfterCall,
+          renderingTypeAfterCall,
+        });
+        this.appendRotationLog({
+          timestamp: Date.now(),
+          headingBeforeCall: opts.heading,
+          headingAtCall: cameraOptions.heading,
+          moveCameraCallCount: this.moveCameraInvocationCount,
+          gpsBearing: state.bearing,
+          renderedHeading: this.renderedHeading,
+          mapHeadingAfterCall,
+          mapTiltAfterCall,
+          renderingTypeAfterCall,
+        });
+      } catch (diagnosticError) {
+        console.error('[노을-moveCamera/map-state]', diagnosticError);
+      }
       console.info('[노을-moveCamera/after]', {
         timestamp: new Date().toISOString(),
         ...logBase,
