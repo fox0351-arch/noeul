@@ -147,6 +147,7 @@ export class MapManager {
       zoom: 13,
       heading: 0,
       tilt: 0,
+      mapTypeId: google.maps.MapTypeId.ROADMAP,
       mapTypeControl: false,
       streetViewControl: false,
       fullscreenControl: true,
@@ -157,8 +158,8 @@ export class MapManager {
       zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM },
       gestureHandling: 'greedy',
     };
-    const vector = google.maps.RenderingType?.VECTOR;
-    if (vector) options.renderingType = vector;
+    const raster = google.maps.RenderingType?.RASTER;
+    if (raster) options.renderingType = raster;
 
     const map = new google.maps.Map(container, options) as MapWithCamera;
     map.addListener('dragstart', () => {
