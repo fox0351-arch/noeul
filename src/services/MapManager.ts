@@ -180,8 +180,8 @@ export class MapManager {
       zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM },
       gestureHandling: 'greedy',
     };
-    const raster = google.maps.RenderingType?.RASTER;
-    if (raster) options.renderingType = raster;
+    const vector = google.maps.RenderingType?.VECTOR;
+    if (vector) options.renderingType = vector;
 
     const map = new google.maps.Map(container, options) as MapWithCamera;
     map.addListener('dragstart', () => {
