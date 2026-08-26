@@ -654,12 +654,43 @@ export class MapManager {
     zoom: number;
   }): boolean {
     const map = this.map;
-    if (!map) return false;
+    const state = useLocationStore.getState();
+    const logBase = {
+      gps: { lat: state.lat, lng: state.lng },
+      heading: opts.heading,
+      followMode: state.followMode,
+    };
+    if (!map) {
+      console.warn('[노을-moveCamera/after]', {
+        timestamp: new Date().toISOString(),
+        ...logBase,
+        moveCameraCalled: false,
+        success: false,
+        error: 'map is not attached',
+      });
+      return false;
+    }
     const moveCamera =
       typeof map.moveCamera === 'function'
         ? map.moveCamera.bind(map)
         : (google.maps.Map.prototype as MapWithCamera).moveCamera?.bind(map);
-    if (typeof moveCamera !== 'function') return false;
+    if (typeof moveCamera !== 'function') {
+      console.warn('[노을-moveCamera/after]', {
+        timestamp: new Date().toISOString(),
+        ...logBase,
+        moveCameraCalled: false,
+        success: false,
+        error: 'moveCamera is not available',
+      });
+      return false;
+    }
+    console.info('[노을-moveCamera/before]', {
+      timestamp: new Date().toISOString(),
+      ...logBase,
+      moveCameraCalled: false,
+      success: null,
+      error: null,
+    });
     try {
       moveCamera({
         center: { lat: opts.lat, lng: opts.lng },
@@ -667,9 +698,26 @@ export class MapManager {
         heading: opts.heading,
         tilt: 0,
       });
+      console.info('[노을-moveCamera/after]', {
+        timestamp: new Date().toISOString(),
+        ...logBase,
+        moveCameraCalled: true,
+        success: true,
+        error: null,
+      });
       this.moveCameraCount += 1;
       return true;
-    } catch {
+    } catch (error) {
+      console.error('[노을-moveCamera/after]', {
+        timestamp: new Date().toISOString(),
+        ...logBase,
+        moveCameraCalled: true,
+        success: false,
+        error:
+          error instanceof Error
+            ? { name: error.name, message: error.message, stack: error.stack }
+            : String(error),
+      });
       return false;
     }
   }
