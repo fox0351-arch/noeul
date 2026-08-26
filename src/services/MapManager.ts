@@ -29,6 +29,15 @@ type MapWithCamera = google.maps.Map & {
   }) => void;
 };
 
+export type RotationCameraLog = {
+  timestamp: number;
+  headingBeforeCall: number;
+  headingAtCall: number;
+  moveCameraCallCount: number;
+  gpsBearing: number | null;
+  renderedHeading: number;
+};
+
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
@@ -94,6 +103,13 @@ export class MapManager {
     return MapManager.instance;
   }
 
+  readonly getRotationLogs = (): readonly RotationCameraLog[] => this.rotationLogs;
+
+  readonly subscribeRotationLogs = (listener: () => void): (() => void) => {
+    this.rotationLogListeners.add(listener);
+    return () => this.rotationLogListeners.delete(listener);
+  };
+
   private map: MapWithCamera | null = null;
   private routeLine: google.maps.Polyline | null = null;
   private trackLine: google.maps.Polyline | null = null;
@@ -122,6 +138,8 @@ export class MapManager {
   private unsubscribeStore: (() => void) | null = null;
   private moveCameraCount = 0;
   private moveCameraInvocationCount = 0;
+  private rotationLogs: readonly RotationCameraLog[] = [];
+  private rotationLogListeners = new Set<() => void>();
   private fitBoundsCount = 0;
   private fabRoot: HTMLDivElement | null = null;
   private locateBtn: HTMLButtonElement | null = null;
@@ -529,6 +547,8 @@ export class MapManager {
           this.trackLine?.setPath([]);
           this.moveCameraCount = 0;
           this.moveCameraInvocationCount = 0;
+          this.rotationLogs = [];
+          this.notifyRotationLogListeners();
           this.fitBoundsCount = 0;
           this.dragPauseUntil = 0;
           this.lastCameraAt = 0;
@@ -706,6 +726,14 @@ export class MapManager {
         headingAtCall: cameraOptions.heading,
         moveCameraCallCount: this.moveCameraInvocationCount,
       });
+      this.appendRotationLog({
+        timestamp: Date.now(),
+        headingBeforeCall: opts.heading,
+        headingAtCall: cameraOptions.heading,
+        moveCameraCallCount: this.moveCameraInvocationCount,
+        gpsBearing: state.bearing,
+        renderedHeading: this.renderedHeading,
+      });
       moveCamera(cameraOptions);
       console.info('[노을-moveCamera/after]', {
         timestamp: new Date().toISOString(),
@@ -728,6 +756,21 @@ export class MapManager {
             : String(error),
       });
       return false;
+    }
+  }
+
+  private appendRotationLog(log: RotationCameraLog): void {
+    this.rotationLogs = [...this.rotationLogs, log].slice(-20);
+    this.notifyRotationLogListeners();
+  }
+
+  private notifyRotationLogListeners(): void {
+    for (const listener of this.rotationLogListeners) {
+      try {
+        listener();
+      } catch (error) {
+        console.error('[노을-moveCamera/panel]', error);
+      }
     }
   }
 

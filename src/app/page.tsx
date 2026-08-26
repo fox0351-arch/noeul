@@ -43,6 +43,7 @@ import { loadGuardianPhone, saveGuardianPhone } from '@/lib/guardianStorage';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
 import { loadUserSettings, saveUserSettings, type VoiceStyle } from '@/lib/userData';
 import MapDomView from '@/components/MapDomView';
+import RotationDebugPanel from '@/components/RotationDebugPanel';
 import SimQueryRedirect from '@/components/SimQueryRedirect';
 import { useLocationStore } from '@/store/useLocationStore';
 import { MapManager } from '@/services/MapManager';
@@ -2167,6 +2168,7 @@ export default function HomePage() {
               userLocation && gpsAccuracyM != null && gpsAccuracyM >= WEAK_GPS_ACCURACY_M
             )}
           />
+          {isFollowMode && <RotationDebugPanel />}
           {isFollowMode && (
             <div className="absolute z-20 flex flex-col items-end gap-1.5 top-2 right-12 pointer-events-none">
               <button
