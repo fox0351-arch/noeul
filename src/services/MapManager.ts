@@ -31,8 +31,8 @@ type MapWithCamera = google.maps.Map & {
 
 export type RotationCameraLog = {
   timestamp: number;
-  headingBeforeCall: number;
-  headingAtCall: number;
+  headingBeforeCall: number | null;
+  headingAtCall: number | null;
   moveCameraCallCount: number;
   gpsBearing: number | null;
   renderedHeading: number;
@@ -137,6 +137,8 @@ export class MapManager {
   private renderedLng: number | null = null;
   private renderedHeading = 0;
   private committedHeading: number | null = null;
+  private rotationStarted = false;
+  private rotationHoldLogged = false;
   private lastRotationLogAt = 0;
   private unsubscribeStore: (() => void) | null = null;
   private moveCameraCount = 0;
@@ -386,10 +388,11 @@ export class MapManager {
     this.lastCameraAt = 0;
     this.renderedLat = lat;
     this.renderedLng = lng;
+    const hasBearing = useLocationStore.getState().hasBearing;
     this.moveCameraOnce({
       lat,
       lng,
-      heading: 0,
+      heading: hasBearing ? 0 : null,
       zoom,
     });
   }
@@ -555,9 +558,14 @@ export class MapManager {
           this.fitBoundsCount = 0;
           this.dragPauseUntil = 0;
           this.lastCameraAt = 0;
-          const startBearing = useLocationStore.getState().bearing;
+          this.rotationStarted = false;
+          this.rotationHoldLogged = false;
+          const startState = useLocationStore.getState();
+          const startBearing = startState.bearing;
           this.committedHeading =
-            startBearing != null && Number.isFinite(startBearing) ? startBearing : null;
+            startState.hasBearing && startBearing != null && Number.isFinite(startBearing)
+              ? startBearing
+              : null;
           if (this.committedHeading != null) this.renderedHeading = this.committedHeading;
         }
         if (!slice.followMode && prev.followMode) {
@@ -599,16 +607,37 @@ export class MapManager {
 
     const user: PlaceLocation = { latitude: state.lat, longitude: state.lng };
     const travel =
-      state.bearing != null && Number.isFinite(state.bearing) ? state.bearing : null;
-    if (state.headingUp) {
-      // 거리·속도·각도 판정은 worker에서 끝났습니다. 카메라는 중복 차단하지 않습니다.
-      if (travel != null) this.committedHeading = travel;
+      state.hasBearing && state.bearing != null && Number.isFinite(state.bearing)
+        ? state.bearing
+        : null;
+    let headingForCamera: number | null = null;
+    if (travel == null) {
+      if (!this.rotationHoldLogged) {
+        this.rotationHoldLogged = true;
+        console.info('[회전 보류]', {
+          bearing: null,
+          timestamp: Date.now(),
+        });
+      }
     } else {
-      this.committedHeading = 0;
-    }
+      if (!this.rotationStarted) {
+        this.rotationStarted = true;
+        console.info('[회전 시작]', {
+          bearing: travel,
+          timestamp: Date.now(),
+        });
+      }
+      if (state.headingUp) {
+        // 거리·속도·각도 판정은 worker에서 끝났습니다. 카메라는 중복 차단하지 않습니다.
+        this.committedHeading = travel;
+      } else {
+        this.committedHeading = 0;
+      }
 
-    const headingTarget = this.committedHeading ?? this.renderedHeading;
-    this.renderedHeading = lerpHeading(this.renderedHeading, headingTarget, CAMERA_HEADING_LERP);
+      const headingTarget = this.committedHeading ?? this.renderedHeading;
+      this.renderedHeading = lerpHeading(this.renderedHeading, headingTarget, CAMERA_HEADING_LERP);
+      headingForCamera = this.renderedHeading;
+    }
 
     const mapH = map.getDiv()?.clientHeight || 640;
     const target =
@@ -628,7 +657,7 @@ export class MapManager {
     const moved = this.moveCameraOnce({
       lat: this.renderedLat,
       lng: this.renderedLng,
-      heading: this.renderedHeading,
+      heading: headingForCamera,
       zoom: WALK_ZOOM,
     });
     if (!moved) return;
@@ -675,7 +704,7 @@ export class MapManager {
   private moveCameraOnce(opts: {
     lat: number;
     lng: number;
-    heading: number;
+    heading: number | null;
     zoom: number;
   }): boolean {
     const map = this.map;
@@ -717,16 +746,21 @@ export class MapManager {
       error: null,
     });
     try {
-      const cameraOptions = {
+      const cameraOptions: {
+        center: google.maps.LatLngLiteral;
+        zoom: number;
+        heading?: number;
+        tilt: number;
+      } = {
         center: { lat: opts.lat, lng: opts.lng },
         zoom: opts.zoom,
-        heading: opts.heading,
         tilt: 0,
       };
+      if (state.hasBearing && opts.heading != null) cameraOptions.heading = opts.heading;
       this.moveCameraInvocationCount += 1;
       console.info('[노을-moveCamera/rotation]', {
         headingBeforeCall: opts.heading,
-        headingAtCall: cameraOptions.heading,
+        headingAtCall: cameraOptions.heading ?? null,
         moveCameraCallCount: this.moveCameraInvocationCount,
       });
       moveCamera(cameraOptions);
@@ -744,7 +778,7 @@ export class MapManager {
         this.appendRotationLog({
           timestamp: Date.now(),
           headingBeforeCall: opts.heading,
-          headingAtCall: cameraOptions.heading,
+          headingAtCall: cameraOptions.heading ?? null,
           moveCameraCallCount: this.moveCameraInvocationCount,
           gpsBearing: state.bearing,
           renderedHeading: this.renderedHeading,

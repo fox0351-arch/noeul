@@ -21,6 +21,7 @@ type LocationFixInput = {
   lat: number;
   lng: number;
   bearing: number | null;
+  hasBearing: boolean;
   accuracy: number | null;
   speedKmh: number | null;
   timestamp: number;
@@ -31,6 +32,7 @@ type LocationState = {
   lat: number | null;
   lng: number | null;
   bearing: number | null;
+  hasBearing: boolean;
   accuracy: number | null;
   speedKmh: number | null;
   timestamp: number;
@@ -56,6 +58,7 @@ export const useLocationStore = create<LocationState>()(
     lat: null,
     lng: null,
     bearing: null,
+    hasBearing: false,
     accuracy: null,
     speedKmh: null,
     timestamp: 0,
@@ -71,6 +74,7 @@ export const useLocationStore = create<LocationState>()(
         lat: fix.lat,
         lng: fix.lng,
         bearing: fix.bearing,
+        hasBearing: fix.hasBearing,
         accuracy: fix.accuracy,
         speedKmh: fix.speedKmh,
         timestamp: fix.timestamp,

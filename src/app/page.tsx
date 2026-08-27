@@ -136,6 +136,7 @@ export default function HomePage() {
   const lastFixAtRef = useRef(0);
   const mapHeadingRef = useRef<number | null>(null);
   const lastGoodHeadingRef = useRef<number | null>(null);
+  const hasLoggedGpsBearingRef = useRef(false);
   const rotationLogAtRef = useRef(0);
   const lastRawGpsRef = useRef<PlaceLocation | null>(null);
   const currentRouteRef = useRef(currentRoute);
@@ -213,6 +214,7 @@ export default function HomePage() {
         lat: lastFix.latitude,
         lng: lastFix.longitude,
         bearing: null,
+        hasBearing: false,
         accuracy: lastFix.accuracyM,
         speedKmh: null,
         timestamp: Date.now(),
@@ -490,6 +492,15 @@ export default function HomePage() {
 
         // worker가 거리·속도·각도를 한 번만 판정합니다. 화면에서는 bearing을 다시 막지 않습니다.
         if (heading != null) {
+          if (!hasLoggedGpsBearingRef.current) {
+            hasLoggedGpsBearingRef.current = true;
+            console.info('[GPS 방향 확보]', {
+              bearing: heading,
+              accuracy,
+              speed: fix.speedKmh,
+              timestamp: fix.timestamp,
+            });
+          }
           lastGoodHeadingRef.current = heading;
           mapHeadingRef.current = heading;
         }
@@ -521,6 +532,7 @@ export default function HomePage() {
           lat: next.latitude,
           lng: next.longitude,
           bearing: lastGoodHeadingRef.current,
+          hasBearing: fix.hasBearing,
           accuracy,
           speedKmh: fix.speedKmh,
           timestamp: fix.timestamp,
@@ -1031,6 +1043,7 @@ export default function HomePage() {
         lat: loc.latitude,
         lng: loc.longitude,
         bearing: lastGoodHeadingRef.current,
+        hasBearing: useLocationStore.getState().hasBearing,
         accuracy: last.accuracyM,
         speedKmh: null,
         timestamp: Date.now(),
@@ -1165,6 +1178,7 @@ export default function HomePage() {
           lat: next.latitude,
           lng: next.longitude,
           bearing: heading,
+          hasBearing: useLocationStore.getState().hasBearing,
           accuracy: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null,
           speedKmh: null,
           timestamp: pos.timestamp,
