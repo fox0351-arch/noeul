@@ -357,7 +357,7 @@ export default function DriveUploadTestPanel() {
       } catch (error) {
         setContentError(error instanceof Error ? error.message : '콘텐츠를 만들지 못했습니다.');
         try {
-          const blog = await requestTravelBlogDraft(user, analyzedForCourse);
+          const blog = await requestTravelBlogDraft(user, analyzedForCourse, trailMatches);
           setDraft(blog.draft);
           setStory(blog.story);
           setQuality(blog.quality ?? null);
@@ -399,7 +399,7 @@ export default function DriveUploadTestPanel() {
     } catch (error) {
       setContentError(error instanceof Error ? error.message : '콘텐츠를 만들지 못했습니다.');
       try {
-        const blog = await requestTravelBlogDraft(user, analyzedPhotos);
+        const blog = await requestTravelBlogDraft(user, analyzedPhotos, galmaetgilMatches);
         setDraft(blog.draft);
         setStory(blog.story);
         setQuality(blog.quality ?? null);

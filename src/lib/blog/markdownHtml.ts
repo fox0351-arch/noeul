@@ -21,30 +21,37 @@ export function markdownToHtml(markdown: string): string {
 
 export function toMarkdownDraft(input: {
   title: string;
+  infoBox?: string;
   intro: string;
   story: string;
   places: string;
   closing: string;
+  recommendations?: string;
 }): string {
   return [
     `# ${input.title}`,
     '',
-    '## 도입부',
+    input.infoBox || '',
+    '',
+    '## 본문',
     input.intro,
     '',
-    '## 여행 이야기',
     input.story,
     '',
-    '## 장소 소개',
     input.places,
     '',
-    '## 마무리 소감',
     input.closing,
+    '',
+    input.recommendations || '',
   ]
     .filter((line) => line !== undefined)
     .join('\n');
 }
 
 export function proseCharCount(parts: string[]): number {
-  return parts.map((part) => part.replace(/\s+/g, ' ').trim()).join('').length;
+  return parts
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' ')
+    .length;
 }

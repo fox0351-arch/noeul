@@ -3,6 +3,7 @@ import { generateTravelBlogDraft } from '@/lib/photoPipeline/generateTravelBlog'
 import { scoreBlogQuality } from '@/lib/contentPack/scoreBlogQuality';
 import { verifyRequestUser } from '@/lib/firebase/verifyRequest';
 import type { PhotoAnalysis } from '@/types/blog';
+import type { GalmaetgilPlaceMatch } from '@/types/galmaetgilMatch';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -32,10 +33,32 @@ function parsePhotos(value: unknown): PhotoAnalysis[] {
   });
 }
 
+function parseMatches(value: unknown): GalmaetgilPlaceMatch[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 12).map((item) => {
+    const record = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+    return {
+      placeName: typeof record.placeName === 'string' ? record.placeName : '',
+      matched: Boolean(record.matched),
+      kind: record.kind === 'exact' || record.kind === 'nearby' ? record.kind : 'none',
+      message: typeof record.message === 'string' ? record.message : undefined,
+      courseName: typeof record.courseName === 'string' ? record.courseName : '',
+      sectionName: typeof record.sectionName === 'string' ? record.sectionName : '',
+      distanceLabel: typeof record.distanceLabel === 'string' ? record.distanceLabel : '',
+      durationLabel: typeof record.durationLabel === 'string' ? record.durationLabel : '',
+      difficulty: typeof record.difficulty === 'string' ? record.difficulty : '',
+      parking: typeof record.parking === 'string' ? record.parking : '',
+      toilet: typeof record.toilet === 'string' ? record.toilet : '',
+      carCamping: typeof record.carCamping === 'string' ? record.carCamping : '',
+      seniorRecommend: typeof record.seniorRecommend === 'string' ? record.seniorRecommend : '',
+    };
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     await verifyRequestUser(request);
-    const body = (await request.json()) as { photos?: unknown };
+    const body = (await request.json()) as { photos?: unknown; galmaetgil?: unknown };
     const photos = parsePhotos(body.photos).filter((photo) => photo.status === 'analyzed');
     if (photos.length === 0) {
       return NextResponse.json(
@@ -43,8 +66,9 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const result = await generateTravelBlogDraft(photos);
-    const quality = scoreBlogQuality({ draft: result.draft, photos });
+    const galmaetgil = parseMatches(body.galmaetgil);
+    const result = await generateTravelBlogDraft(photos, { galmaetgil });
+    const quality = scoreBlogQuality({ draft: result.draft, photos, galmaetgil });
     return NextResponse.json({ story: result.story, draft: result.draft, quality });
   } catch (error) {
     const message = error instanceof Error ? error.message : '블로그 초안을 만들지 못했습니다.';

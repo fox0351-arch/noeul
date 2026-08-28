@@ -9,7 +9,7 @@ function clamp(value: number): number {
 }
 
 function blogText(draft: BlogDraft): string {
-  return [draft.title, draft.summary, draft.body, draft.intro, draft.story, draft.places, draft.closing]
+  return [draft.title, draft.summary, draft.infoBox, draft.body, draft.intro, draft.story, draft.places, draft.closing]
     .filter(Boolean)
     .join('\n');
 }

@@ -1,7 +1,9 @@
 import { generateGeminiJsonObject } from '@/lib/photoAi';
 import { markdownToHtml, proseCharCount, toMarkdownDraft } from '@/lib/blog/markdownHtml';
 import { compactPhotoAnalyses, inferTravelStory } from '@/lib/blog/travelStory';
-import type { BlogDraft, BlogSeo, PhotoAnalysis, TravelStory } from '@/types/blog';
+import { formatTravelInfoBox, resolveBlogTravelFacts, type BlogTravelFacts } from '@/lib/blog/travelInfoBox';
+import type { BlogDraft, BlogRecommendations, BlogSeo, PhotoAnalysis, TravelStory } from '@/types/blog';
+import type { GalmaetgilPlaceMatch } from '@/types/galmaetgilMatch';
 
 const MIN_CHARS = 1500;
 const MAX_CHARS = 2000;
@@ -33,44 +35,127 @@ function withHashtag(value: string): string {
   return clean ? `#${clean}` : '';
 }
 
-function fallbackSeo(photos: PhotoAnalysis[], story: TravelStory): BlogSeo {
+function fallbackSeo(photos: PhotoAnalysis[], story: TravelStory, facts: BlogTravelFacts): BlogSeo {
+  const place = facts.placeName !== '확인 불가' ? facts.placeName : story.route[0] || '';
+  const course = facts.courseName !== '확인 불가' ? facts.courseName : '';
   const keywords = Array.from(
     new Set(
       [
+        place,
+        course,
+        '걷기 코스',
+        '산책 코스',
         ...story.route,
         ...photos.flatMap((photo) => photo.keywords ?? []),
-        ...photos.flatMap((photo) => photo.objects ?? []),
       ]
         .map((item) => item.replace(/^#/, '').trim())
         .filter(Boolean)
     )
   ).slice(0, 12);
   const hashtags = Array.from(
-    new Set(['#여행에세이', '#감성여행', ...story.route.map(withHashtag), ...keywords.map(withHashtag)])
-  )
-    .filter(Boolean)
-    .slice(0, 16);
+    new Set(
+      [
+        '#부산여행',
+        '#걷기여행',
+        '#산책코스',
+        ...story.route.map(withHashtag),
+        ...keywords.map(withHashtag),
+      ].filter(Boolean)
+    )
+  ).slice(0, 16);
   const searchQueries = Array.from(
-    new Set([
-      ...story.route.map((place) => `${place} 여행`),
-      ...story.route.map((place) => `${place} 산책`),
-      ...keywords.slice(0, 4).map((word) => `${word} 후기`),
-    ])
+    new Set(
+      [
+        place ? `${place} 걷기 코스` : '',
+        place ? `${place} 여행` : '',
+        course ? `${course} 후기` : '',
+        ...story.route.map((name) => `${name} 산책`),
+      ].filter(Boolean)
+    )
   ).slice(0, 10);
   return { keywords, hashtags, searchQueries };
 }
 
-function extras(): string[] {
+function cultureNote(place: string, course: string): string {
+  if (/해운대/.test(place) || /해운대/.test(course)) {
+    return '해운대라는 이름은 최치원이 이 바닷가에 머물며 글을 남겼다는 전설과 함께 읽히곤 한다. 오래된 지명이 오늘의 산책로 위에 겹쳐 있다.';
+  }
+  if (/광안/.test(place) || /광안/.test(course)) {
+    return '광안대교가 놓이기 전에도 이 만은 어촌의 불빛으로 밤을 밝혔다. 다리는 풍경을 바꿨지만, 물결의 리듬은 그대로다.';
+  }
+  if (/갈맷길/.test(course) || /갈맷길/.test(place)) {
+    return '갈맷길은 부산 바다와 강을 한 줄로 잇는 도보길이다. 이정표보다 먼저 바람의 온도가 구간을 알려 준다.';
+  }
+  if (/낙동|을숙/.test(place + course)) {
+    return '낙동강 하구는 철새와 사람의 길이 겹치는 자리다. 물길이 도시를 비켜 가며 남긴 여백이 고스란히 남아 있다.';
+  }
+  return '길이 오래될수록 풍경은 익숙해 보이지만, 빛과 바람은 매번 다른 얼굴을 내민다.';
+}
+
+function photoSpotsFrom(photos: PhotoAnalysis[], place: string): string[] {
+  const spots: string[] = [];
+  for (const photo of photos) {
+    const name = photo.place?.trim() || place;
+    const object = photo.objects?.[0];
+    const label = object ? `${name} · ${object}` : name;
+    if (label && !spots.includes(label)) spots.push(label);
+    if (spots.length >= 6) break;
+  }
+  return spots.length ? spots : [place];
+}
+
+function buildRecommendations(
+  facts: BlogTravelFacts,
+  photos: PhotoAnalysis[],
+  record?: Record<string, unknown>
+): BlogRecommendations {
+  const photoSpots = asStringList(record?.photoSpots);
+  const restaurants = asStringList(record?.restaurants);
+  const cafes = asStringList(record?.cafes);
+  return {
+    photoSpots: photoSpots.length ? photoSpots.slice(0, 6) : photoSpotsFrom(photos, facts.placeName),
+    restaurants: restaurants.length ? restaurants.slice(0, 4) : facts.restaurants,
+    cafes: cafes.length ? cafes.slice(0, 4) : facts.cafes,
+    carCamping: asText(record?.carCamping) || facts.carCamping,
+    seniorDifficulty: asText(record?.seniorDifficulty) || facts.seniorWalk,
+  };
+}
+
+function formatRecommendations(rec: BlogRecommendations): string {
   return [
-    '걸음은 빠르지 않았고, 그 느림이 오히려 풍경을 오래 붙잡아 주었다.',
-    '바람은 사진을 흔들었지만 기억은 오히려 더 또렷해졌다.',
-    '우리는 같은 자리를 두고도 서로 다른 하늘을 보았고, 그 차이가 하루를 부드럽게 만들었다.',
-    '돌아오는 길에도 발끝에는 모래와 그늘의 온기가 조금 남아 있었다.',
-    '카페의 창가에 앉아 사진을 다시 보니, 그때의 빛은 생각보다 더 낮고 따뜻했다.',
-    '지도보다 발끝이 먼저 방향을 정했고, 우리는 그 결정을 굳이 고치지 않았다.',
-    '사람이 많은 자리에서도 서로의 속도만 맞추면 길은 생각보다 한가했다.',
-    '저녁이 가까워질수록 말은 줄고, 대신 발소리와 파도 소리가 남았다.',
-    '그날의 기록은 완벽한 코스가 아니라, 둘이 같은 시간을 나눠 가진 흔적에 가깝다.',
+    '## 추천 포토존',
+    rec.photoSpots.map((item) => `- ${item}`).join('\n') || '- 확인 불가',
+    '',
+    '## 추천 맛집',
+    rec.restaurants.map((item) => `- ${item}`).join('\n') || '- 확인 불가',
+    '',
+    '## 추천 카페',
+    rec.cafes.map((item) => `- ${item}`).join('\n') || '- 확인 불가',
+    '',
+    '## 차박 정보',
+    rec.carCamping,
+    '',
+    '## 시니어 걷기 난이도',
+    rec.seniorDifficulty,
+  ].join('\n');
+}
+
+function lengthFillers(facts: BlogTravelFacts, photos: PhotoAnalysis[]): string[] {
+  const place = facts.placeName;
+  const course = facts.courseName;
+  const note = cultureNote(place, course);
+  return [
+    `파도는 같은 자리를 밀려오지만, 걷는 사람의 마음은 늘 조금씩 달라진다. ${place} 앞바다도 예외가 아니다.`,
+    `${course}는 단순한 해안 산책길이 아니다. 부산 바다의 시간을 천천히 만날 수 있는 구간에 가깝다.`,
+    note,
+    photos[0]?.description
+      ? `빛이 ${photos[0].place || place} 위로 낮게 깔리면, ${photos[0].description} 그 순간 발걸음은 자연히 느려진다.`
+      : `${place}의 하늘은 높지 않아도 넓다. 바람이 옷깃을 스칠 때마다 거리가 숫자 밖으로 빠져나온다.`,
+    photos[1]?.description
+      ? `${photos[1].place || place}로 이어지는 굽이에서 ${photos[1].description} 그늘이 생기면 마음도 잠시 앉는다.`
+      : `중반의 바람은 초반보다 솔직하다. 난간이 없는 자리일수록 풍경은 크고, 발밑은 조심스러워진다.`,
+    `시니어 부부에게 ${facts.seniorWalk} 수준의 길이다. 벤치가 보이는 자리에서 숨을 고르면, 남은 거리가 부담으로 남지 않는다.`,
+    `저녁이 가까워지면 ${place}의 색이 한 톤 깊어진다. 같은 코스라도 해 질 녘의 공기는 오전과 다르다.`,
   ];
 }
 
@@ -87,18 +172,21 @@ function joinBody(parts: string[]): string {
 function assembleDraft(input: {
   title: string;
   summary?: string;
+  infoBox: string;
   intro: string;
   story: string;
   places: string;
   closing: string;
   seo: BlogSeo;
+  fillers: string[];
+  recommendations: BlogRecommendations;
 }): BlogDraft {
   let intro = input.intro.trim();
   let storyText = input.story.trim();
   let places = input.places.trim();
   let closing = input.closing.trim();
   let count = proseCharCount([intro, storyText, places, closing]);
-  for (const extra of extras()) {
+  for (const extra of input.fillers) {
     if (count >= MIN_CHARS) break;
     const nextStory = `${storyText}\n\n${extra}`.trim();
     const nextCount = proseCharCount([intro, nextStory, places, closing]);
@@ -106,28 +194,25 @@ function assembleDraft(input: {
     storyText = nextStory;
     count = nextCount;
   }
-  let guard = 0;
-  while (count < MIN_CHARS && guard < 24) {
-    const extra = extras()[guard % extras().length];
-    const nextStory = `${storyText}\n\n${extra}`.trim();
-    storyText = nextStory;
-    count = proseCharCount([intro, storyText, places, closing]);
-    guard += 1;
-  }
   if (count > MAX_CHARS) {
     storyText = clipProse(storyText);
   }
-  const body = joinBody([intro, storyText, places, closing]);
+  const prose = joinBody([intro, storyText, places, closing]);
+  const recBlock = formatRecommendations(input.recommendations);
+  const body = joinBody([input.infoBox, prose, recBlock]);
   const markdown = toMarkdownDraft({
     title: input.title,
+    infoBox: input.infoBox,
     intro,
     story: storyText,
     places,
     closing,
+    recommendations: recBlock,
   });
   return {
     title: input.title,
-    summary: (input.summary || '').trim() || firstSentence(intro) || firstSentence(body),
+    summary: (input.summary || '').trim() || firstSentence(intro) || firstSentence(prose),
+    infoBox: input.infoBox,
     intro,
     story: storyText,
     places,
@@ -136,46 +221,61 @@ function assembleDraft(input: {
     markdown,
     html: markdownToHtml(markdown),
     seo: input.seo,
-    charCount: proseCharCount([body]),
+    recommendations: input.recommendations,
+    charCount: proseCharCount([prose]),
   };
 }
 
-export function fallbackTravelBlog(photos: PhotoAnalysis[], story: TravelStory): BlogDraft {
+export function fallbackTravelBlog(
+  photos: PhotoAnalysis[],
+  story: TravelStory,
+  galmaetgil?: GalmaetgilPlaceMatch[]
+): BlogDraft {
   const analyzed = (photos ?? []).filter((photo) => photo?.status === 'analyzed');
-  const route = story.route.length ? story.route : ['그날의 길'];
+  const facts = resolveBlogTravelFacts(analyzed, galmaetgil);
+  const route = story.route.length ? story.route : [facts.placeName];
+  const place = facts.placeName;
+  const course = facts.courseName;
   const title =
-    route.length > 1 ? `${route[0]}에서 ${route[route.length - 1]}까지` : `${route[0]}, 천천히 걸은 하루`;
-  const intro =
-    '사진을 한 장씩 넘겨 보니, 말은 적어도 발자국은 분명한 하루가 남아 있었다. 우리는 서둘러 도착지를 정하지 않고, 눈에 닿는 자리를 따라 걸었다.';
-  const storyText =
-    analyzed
-      .map((photo) => {
-        const place = photo.place || '그 자리';
-        const description = photo.description || `${place} 앞에서 잠시 머물렀다.`;
-        const mood = photo.mood ? ` 분위기는 ${photo.mood}에 가까웠다.` : '';
-        return `${place}에서. ${description}${mood}`;
-      })
-      .join('\n\n') || '풍경은 이름을 남기지 않아도, 걸음은 스스로 순서를 만들었다.';
-  const placesText = route
-    .map((place, index) =>
-      index === 0 ? `${place}에서 하루를 열었다.` : `이어서 ${place}으로 발길을 옮겼다.`
-    )
+    course !== '확인 불가' ? `${place}, ${course}에서 만난 바다의 시간` : `${place}에서 만난 바다의 시간`;
+  const summary = `${place} ${course !== '확인 불가' ? course : '걷기 코스'}를 천천히 따라가며 풍경과 숨결을 적어 둔 기록.`;
+  const intro = `${course}는 숫자를 세며 걷는 길이 아니다. ${place}에 서면 파도가 같은 자리를 밀려오지만, 그 위의 빛은 매번 다르다. ${cultureNote(place, course)} 거리는 ${facts.distance}, 예상 소요시간은 ${facts.duration} 정도다. 난이도는 ${facts.difficulty}. 서두르지 않아도 풍경은 제자리에 남아 있다.`;
+  const walk = analyzed
+    .map((photo, index) => {
+      const name = photo.place || place;
+      const scene = photo.description || `${name} 위로 바람이 낮게 지난다.`;
+      if (index === 0) {
+        return `${name}에 들어서는 순간, ${scene} 발밑의 모래와 돌이 도시의 속도를 한 겹 벗겨 낸다. 초반은 풍경을 소유하려는 마음보다, 숨이 고르기를 기다리는 시간이 필요하다.`;
+      }
+      if (index === 1) {
+        return `${name}으로 굽이치면 ${scene} 그늘이 생기는 자리마다 마음이 잠시 앉는다. ${course}의 중반은 풍경이 크고, 말은 줄어든다.`;
+      }
+      return `${name}을 지날 때 ${scene} 멀리 보이는 수평선이 일정을 재촉하지 않는다.`;
+    })
     .join('\n\n');
-  const closing =
-    '돌아보면 화려한 장면보다, 둘이서 같은 방향을 바라본 시간이 더 오래 남는다. 그 천천히 접힌 하루를 꾸미지 않고 솔직하게 적어 둔다.';
+  const storyText =
+    walk ||
+    `${place}를 따라가면 해안과 산책로가 숨을 나눠 쉰다. ${course}의 바람은 세지만, 걸음을 나누면 부담이 되지 않는다.`;
+  const placesText = `${route.slice(0, 3).join(', ')} 언저리에 시선이 머문다. 맛은 ${facts.restaurant} 쪽에서, 쉼은 ${facts.cafe} 쪽에서 이어진다. 포토존은 풍경을 가두는 자리가 아니라, 잠시 서서 숨이 길어지는 자리다.`;
+  const closing = `${place}를 한 바퀴 돌고 나면 남은 것은 인증보다 온도다. ${facts.seniorWalk} 수준의 길이라면, 둘이 속도를 맞추는 것만으로도 충분하다. 같은 코스를 다른 시간에 다시 걸으면, 바다는 또 다른 얼굴을 내민다.`;
+  const recommendations = buildRecommendations(facts, analyzed);
   return assembleDraft({
     title,
+    summary,
     intro,
     story: storyText,
     places: placesText,
     closing,
-    seo: fallbackSeo(analyzed, story),
+    infoBox: formatTravelInfoBox(facts),
+    seo: fallbackSeo(analyzed, story, facts),
+    fillers: lengthFillers(facts, analyzed),
+    recommendations,
   });
 }
 
 export async function generateTravelBlogDraft(
   photos: PhotoAnalysis[],
-  options?: { improve?: string }
+  options?: { improve?: string; galmaetgil?: GalmaetgilPlaceMatch[] }
 ): Promise<{
   story: TravelStory;
   draft: BlogDraft;
@@ -183,22 +283,22 @@ export async function generateTravelBlogDraft(
 }> {
   const analyzed = (photos ?? []).filter((photo) => photo?.status === 'analyzed').slice(0, 50);
   const localStory = inferTravelStory(analyzed);
-  const fallback = fallbackTravelBlog(analyzed, localStory);
+  const facts = resolveBlogTravelFacts(analyzed, options?.galmaetgil);
+  const fallback = fallbackTravelBlog(analyzed, localStory, options?.galmaetgil);
   const improve = options?.improve?.trim()
-    ? `이전 초안 개선 요청:\n${options.improve}\n주차·화장실·난이도·갈맷길 코스/구간명을 본문에 자연히 넣고, 1500~2000자를 지키며 짧은 문단으로 나눠라.`
+    ? `이전 초안 개선 요청:\n${options.improve}\n감성 에세이 문체를 유지하고, 1인칭은 20% 이하, 본문 1500~2000자를 지켜라.`
     : '';
   const json = await generateGeminiJsonObject({
-    prompt: `너는 네이버 블로그용 감성 여행 에세이를 쓰는 한국어 작가다.
-여러 장의 사진 분석을 보고 여행 동선을 추론한 뒤 초안을 JSON만 출력하라.
-광고, 과장, 이모지, 추천 강요 금지.
-본문(intro+story+places+closing)은 공백 포함 1500~2000자.
-문체는 담백한 1인칭 또는 부부 시점의 과거형 나레이션.
-반드시 포함할 것: 제목, 한 줄 요약, 도입부, 여행 이야기, 장소 소개, 마무리 소감, 주차·화장실·걷기 난이도.
-동선은 사진 순서와 장소명을 따르되 같은 장소는 잇지 말고 한 번만 적는다.
+    prompt: `너는 한국어 여행작가다. 감성 여행 에세이 나레이션으로 쓴다. 시니어 부부가 천천히 읽기 좋은 짧은 문장.
+문체 예: "파도는 같은 자리를 밀려오지만, 걷는 사람의 마음은 늘 조금씩 달라진다." / "갈맷길 3-2코스는 단순한 해안 산책길이 아니다. 부산 바다의 시간을 가장 천천히 만날 수 있는 길이다."
+1인칭(나/우리/나는)은 전체 문장의 20% 이하. 장소 설명+감성 묘사+역사·문화를 한 문단에 섞는다. 단순 나열 금지. 문단마다 풍경 또는 감정 묘사 최소 1회. 같은 문장 구조 반복, 이모지, 광고 과장 금지.
+intro(도입) / story(걷는 과정) / places(머물 자리) / closing(마무리). 합계 1500~2000자. 여행 정보 박스는 쓰지 마라.
+추천 항목은 별도 JSON 필드로만: photoSpots, restaurants, cafes, carCamping, seniorDifficulty.
+확정 정보: ${JSON.stringify(facts)}
 ${improve}
 사진 분석: ${JSON.stringify(compactPhotoAnalyses(analyzed))}
-이미 추론한 동선: ${JSON.stringify(localStory.route)}
-형식: {"route":["해운대해수욕장","동백섬"],"title":"...","summary":"...","intro":"...","story":"...","places":"...","closing":"...","keywords":["해운대"],"hashtags":["#해운대"],"searchQueries":["해운대 여행"]}`,
+동선: ${JSON.stringify(localStory.route)}
+형식: {"route":["해운대해수욕장"],"title":"...","summary":"한 줄","intro":"...","story":"...","places":"...","closing":"...","photoSpots":["해운대 방파제"],"restaurants":["민락 회센터"],"cafes":["해안 카페"],"carCamping":"...","seniorDifficulty":"...","keywords":["해운대","갈맷길"],"hashtags":["#해운대"],"searchQueries":["해운대 걷기"]}`,
     maxOutputTokens: 4096,
   });
 
@@ -231,7 +331,11 @@ ${improve}
   };
 
   if (storyText.length < 200) {
-    return { story, draft: { ...fallback, title, summary, seo }, fromGemini: true };
+    return {
+      story,
+      draft: { ...fallback, title, summary, seo, infoBox: fallback.infoBox, recommendations: fallback.recommendations },
+      fromGemini: true,
+    };
   }
 
   return {
@@ -240,11 +344,14 @@ ${improve}
     draft: assembleDraft({
       title,
       summary,
+      infoBox: formatTravelInfoBox(facts),
       intro,
       story: storyText,
       places,
       closing,
       seo,
+      fillers: lengthFillers(facts, analyzed),
+      recommendations: buildRecommendations(facts, analyzed, record),
     }),
   };
 }

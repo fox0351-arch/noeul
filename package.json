@@ -9,6 +9,7 @@
     "guard:sim": "node scripts/guard-location-sim.mjs",
     "setup:firebase-admin": "node scripts/setup-firebase-admin.mjs",
     "start": "next start",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint"
   },
   "dependencies": {

@@ -165,7 +165,7 @@ export async function generateContentPack(input: {
   const photos = (input.photos ?? []).filter((photo) => photo?.status === 'analyzed').slice(0, 50);
   const matchedTrail = (input.galmaetgil ?? []).filter((item) => item?.matched);
   try {
-    let blogResult = await generateTravelBlogDraft(photos);
+    let blogResult = await generateTravelBlogDraft(photos, { galmaetgil: input.galmaetgil });
     let quality = scoreBlogQuality({
       draft: blogResult.draft,
       photos,
@@ -180,6 +180,7 @@ export async function generateContentPack(input: {
       rewriteCount = 1;
       blogResult = await generateTravelBlogDraft(photos, {
         improve: `${quality.reasons.join('\n')}\n갈맷길 확정 정보: ${JSON.stringify(matchedTrail)}`,
+        galmaetgil: input.galmaetgil,
       });
       quality = scoreBlogQuality({
         draft: blogResult.draft,
@@ -257,7 +258,7 @@ export async function generateContentPack(input: {
     };
   } catch {
     const story = inferTravelStory(photos);
-    const draft = fallbackTravelBlog(photos, story);
+    const draft = fallbackTravelBlog(photos, story, input.galmaetgil);
     return {
       story,
       blog: draft,

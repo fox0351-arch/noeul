@@ -28,7 +28,8 @@ export async function requestPhotoPipeline(
 
 export async function requestTravelBlogDraft(
   user: User,
-  photos: PhotoAnalysis[]
+  photos: PhotoAnalysis[],
+  galmaetgil?: GalmaetgilPlaceMatch[]
 ): Promise<{ story: TravelStory; draft: BlogDraft; quality?: ContentQualityScore }> {
   const idToken = await user.getIdToken();
   const response = await fetch('/api/photos/blog-draft', {
@@ -37,7 +38,7 @@ export async function requestTravelBlogDraft(
       Authorization: `Bearer ${idToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ photos }),
+    body: JSON.stringify({ photos, galmaetgil: galmaetgil ?? [] }),
   });
   const body = (await response.json()) as {
     story: TravelStory;

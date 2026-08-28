@@ -162,6 +162,7 @@ async function main() {
     title: '여행',
     summary: '다녀왔다',
     intro: '갔다',
+    infoBox: '',
     story: '봤다',
     places: '거기',
     closing: '끝',
@@ -169,11 +170,19 @@ async function main() {
     markdown: '',
     html: '',
     seo: { keywords: [], hashtags: [], searchQueries: [] },
+    recommendations: {
+      photoSpots: [],
+      restaurants: [],
+      cafes: [],
+      carCamping: '',
+      seniorDifficulty: '',
+    },
     charCount: 12,
   };
   const richDraft: BlogDraft = {
     title: '해운대해수욕장에서 동백섬까지',
     summary: '갈맷길 1코스를 천천히 걸었다.',
+    infoBox: '[여행 정보]\n- 장소명: 해운대해수욕장\n- 주차 여부: 공영주차장\n- 화장실 여부: 있음',
     intro: '해운대해수욕장에서 하루를 열었다. 바람과 빛이 발걸음을 붙잡았다.',
     story:
       '우리는 해운대해수욕장 모래를 밟고 동백섬으로 걸음을 옮겼다. 하늘이 낮았고 걸음은 느렸다. 주차는 해운대 공영주차장을 썼고 화장실은 해수욕장 앞에 있었다.',
@@ -186,6 +195,13 @@ async function main() {
       keywords: ['해운대', '갈맷길', '동백섬', '부산여행', '산책'],
       hashtags: ['#해운대', '#갈맷길', '#부산여행', '#시니어여행', '#부부여행', '#산책', '#힐링', '#국내여행'],
       searchQueries: ['해운대 여행'],
+    },
+    recommendations: {
+      photoSpots: ['해운대해수욕장'],
+      restaurants: ['해운대 공영 인근 식당'],
+      cafes: ['해안 카페'],
+      carCamping: '제한',
+      seniorDifficulty: '추천',
     },
     charCount: 1600,
   };

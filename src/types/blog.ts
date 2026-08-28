@@ -23,9 +23,18 @@ export interface BlogSeo {
   searchQueries: string[];
 }
 
+export interface BlogRecommendations {
+  photoSpots: string[];
+  restaurants: string[];
+  cafes: string[];
+  carCamping: string;
+  seniorDifficulty: string;
+}
+
 export interface BlogDraft {
   title: string;
   summary: string;
+  infoBox: string;
   intro: string;
   story: string;
   places: string;
@@ -34,5 +43,7 @@ export interface BlogDraft {
   markdown: string;
   html: string;
   seo: BlogSeo;
+  recommendations: BlogRecommendations;
   charCount: number;
 }
+
