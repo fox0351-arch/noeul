@@ -8,6 +8,10 @@ export function createPlacePhotoId(): string {
   return `photo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+export async function fileToCompressedDataUrl(file: File): Promise<string> {
+  return compressImageFile(file);
+}
+
 export async function filesToPlacePhotos(files: FileList | File[]): Promise<PlacePhoto[]> {
   const list = Array.from(files).filter((file) => file.type.startsWith('image/'));
   const photos: PlacePhoto[] = [];

@@ -7,11 +7,15 @@
     "prebuild": "node scripts/guard-location-sim.mjs",
     "build": "next build",
     "guard:sim": "node scripts/guard-location-sim.mjs",
+    "setup:firebase-admin": "node scripts/setup-firebase-admin.mjs",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
     "@googlemaps/js-api-loader": "^2.1.1",
+    "firebase": "^12.18.0",
+    "firebase-admin": "^14.3.0",
+    "google-auth-library": "^11.0.2",
     "next": "16.3.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",

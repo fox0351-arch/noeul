@@ -1,5 +1,6 @@
 import { PlaceItem } from '@/types/place';
 import { isTravelRoute, TravelRoute } from '@/types/route';
+import { scopedStorageKey } from '@/lib/cloudSync/storageScope';
 
 const STORAGE_KEY = 'noeul.activeRoute.v1';
 
@@ -33,8 +34,9 @@ function isPlaceLite(value: unknown): value is PlaceItem {
 export function saveActiveRouteSession(session: ActiveRouteSession | null): void {
   if (typeof window === 'undefined') return;
   try {
+    const key = scopedStorageKey(STORAGE_KEY);
     if (!session) {
-      window.localStorage.removeItem(STORAGE_KEY);
+      window.localStorage.removeItem(key);
       return;
     }
     const payload: ActiveRouteSession = {
@@ -44,7 +46,7 @@ export function saveActiveRouteSession(session: ActiveRouteSession | null): void
       query: session.query,
       mapId: session.mapId,
     };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    window.localStorage.setItem(key, JSON.stringify(payload));
   } catch {
     // 용량 부족 시 따라가기는 이번 화면에서만 유지
   }
@@ -53,7 +55,7 @@ export function saveActiveRouteSession(session: ActiveRouteSession | null): void
 export function loadActiveRouteSession(): ActiveRouteSession | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(scopedStorageKey(STORAGE_KEY));
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;

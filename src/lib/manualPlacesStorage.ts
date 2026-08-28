@@ -1,4 +1,5 @@
 import { PlaceItem, PlacePhoto } from '@/types/place';
+import { markCloudDataChanged, scopedStorageKey } from '@/lib/cloudSync/storageScope';
 
 const STORAGE_KEY = 'noeul.manualPlaces.v1';
 
@@ -24,7 +25,7 @@ export function loadManualPlaces(): PlaceItem[] {
   if (typeof window === 'undefined') return [];
 
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(scopedStorageKey(STORAGE_KEY));
     if (!raw) return [];
 
     const parsed: unknown = JSON.parse(raw);
@@ -42,5 +43,6 @@ export function loadManualPlaces(): PlaceItem[] {
 
 export function saveManualPlaces(places: PlaceItem[]): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(places));
+  window.localStorage.setItem(scopedStorageKey(STORAGE_KEY), JSON.stringify(places));
+  markCloudDataChanged('favorites');
 }

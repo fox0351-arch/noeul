@@ -1,4 +1,5 @@
 import { UserCollection, UserDataAdapter } from './types';
+import { getAuthScope, markCloudDataChanged } from '@/lib/cloudSync/storageScope';
 
 const USER_ID_KEY = 'noeul.userId.v1';
 
@@ -21,6 +22,8 @@ function writeStorage(key: string, value: string): void {
 }
 
 function ensureUserId(): string {
+  const authUid = getAuthScope();
+  if (authUid) return authUid;
   const existing = readStorage(USER_ID_KEY);
   if (existing) return existing;
   const created =
@@ -51,5 +54,6 @@ export const localUserDataAdapter: UserDataAdapter = {
   },
   set<T>(collection: UserCollection, docId: string, value: T): void {
     writeStorage(docKey(this.getUserId(), collection, docId), JSON.stringify(value));
+    markCloudDataChanged(collection === 'favorites' ? 'favorites' : collection === 'travelMaps' ? 'travelMaps' : 'settings');
   },
 };

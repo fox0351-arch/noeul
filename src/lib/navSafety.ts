@@ -1,12 +1,13 @@
 import { PlaceLocation } from '@/types/place';
 import { VoiceStyle } from '@/lib/userData';
+import { markCloudDataChanged, scopedStorageKey } from '@/lib/cloudSync/storageScope';
 
 const BATTERY_SAVE_KEY = 'noeul.batterySave.v1';
 
 export function loadBatterySave(): boolean {
   if (typeof window === 'undefined') return false;
   try {
-    return window.localStorage.getItem(BATTERY_SAVE_KEY) === '1';
+    return window.localStorage.getItem(scopedStorageKey(BATTERY_SAVE_KEY)) === '1';
   } catch {
     return false;
   }
@@ -15,7 +16,8 @@ export function loadBatterySave(): boolean {
 export function saveBatterySave(enabled: boolean): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(BATTERY_SAVE_KEY, enabled ? '1' : '0');
+    window.localStorage.setItem(scopedStorageKey(BATTERY_SAVE_KEY), enabled ? '1' : '0');
+    markCloudDataChanged('settings');
   } catch {
     // 저장 실패는 이번 화면 설정만 유지
   }

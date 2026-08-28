@@ -1,6 +1,7 @@
 import { PlaceItem, PlacePhoto } from '@/types/place';
 import { isTravelRoute } from '@/types/route';
 import { TravelMap, TravelMapChecklistItem } from '@/types/travelMap';
+import { markCloudDataChanged, scopedStorageKey } from '@/lib/cloudSync/storageScope';
 
 const STORAGE_KEY = 'noeul.travelMaps.v1';
 
@@ -88,7 +89,7 @@ function readStore(): TravelMapStore {
   if (typeof window === 'undefined') return emptyStore();
 
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(scopedStorageKey(STORAGE_KEY));
     if (!raw) return emptyStore();
 
     const parsed: unknown = JSON.parse(raw);
@@ -114,11 +115,16 @@ function readStore(): TravelMapStore {
 
 function writeStore(store: TravelMapStore): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+  window.localStorage.setItem(scopedStorageKey(STORAGE_KEY), JSON.stringify(store));
+  markCloudDataChanged('travelMaps');
 }
 
 export function loadTravelMaps(): TravelMap[] {
   return readStore().maps;
+}
+
+export function replaceTravelMapsForSync(maps: TravelMap[]): void {
+  writeStore({ version: 1, maps });
 }
 
 export function saveTravelMap(map: TravelMap): TravelMap[] {

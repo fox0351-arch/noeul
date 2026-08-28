@@ -44,9 +44,14 @@ import { usePwaInstall } from '@/hooks/usePwaInstall';
 import { loadUserSettings, saveUserSettings, type VoiceStyle } from '@/lib/userData';
 import MapDomView from '@/components/MapDomView';
 import SimQueryRedirect from '@/components/SimQueryRedirect';
+import AuthControls from '@/components/AuthControls';
+import { useAuth } from '@/components/AuthProvider';
 import { useLocationStore } from '@/store/useLocationStore';
 import { MapManager } from '@/services/MapManager';
 import PlaceDetailCard from '@/components/PlaceDetailCard';
+import { markCloudDataChanged, scopedStorageKey } from '@/lib/cloudSync/storageScope';
+import { uploadPlacePhotosToDrive } from '@/lib/googleDrive/client';
+import { requestPhotoPipeline } from '@/lib/photoPipelineClient';
 
 function formatMapDate(iso: string): string {
   const date = new Date(iso);
@@ -58,6 +63,7 @@ function formatMapDate(iso: string): string {
 }
 
 export default function HomePage() {
+  const { user } = useAuth();
   const [keyword, setKeyword] = useState('');
   const [currentQuery, setCurrentQuery] = useState('');
   const [places, setPlaces] = useState<PlaceItem[]>([]);
@@ -199,7 +205,7 @@ export default function HomePage() {
     setHeadingUpMode(true);
     setActiveVoiceStyle(prefs.voiceStyle);
     warmSpeechVoices();
-    const contrastOn = window.localStorage.getItem('noeul.highContrast.v1') === '1';
+    const contrastOn = window.localStorage.getItem(scopedStorageKey('noeul.highContrast.v1')) === '1';
     setHighContrast(contrastOn);
     document.documentElement.classList.toggle('high-contrast', contrastOn);
     setIsOnline(typeof navigator === 'undefined' ? true : navigator.onLine);
@@ -834,6 +840,7 @@ export default function HomePage() {
 
   const handlePlacePhotosSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
+    const selectedFiles = files ? Array.from(files) : [];
     const placeId = photoTargetPlaceId.current;
     e.target.value = '';
     if (!files?.length || !placeId) return;
@@ -866,6 +873,52 @@ export default function HomePage() {
         })
       );
       persistLoadedMapPlaces(analyzed);
+      if (user) {
+        try {
+          const uploaded = await uploadPlacePhotosToDrive(user, selectedFiles, {
+            placeId,
+            travelMapId: loadedMapId,
+            photoIds: added.map((photo) => photo.id),
+          });
+          const driveFileIds = new Map<string, string>();
+          added.forEach((photo, index) => {
+            const driveFileId = uploaded[index]?.id;
+            if (driveFileId) driveFileIds.set(photo.id, driveFileId);
+          });
+          const withDriveReferences = analyzed.map((place) =>
+            place.id === placeId
+              ? {
+                  ...place,
+                  photos: place.photos?.map((photo) => {
+                    const driveFileId = driveFileIds.get(photo.id);
+                    return driveFileId ? { ...photo, driveFileId } : photo;
+                  }),
+                }
+              : place
+          );
+          setPlaces(withDriveReferences);
+          setManualPlaces((prev) =>
+            prev.map((place) => {
+              const updated = withDriveReferences.find((item) => item.id === place.id);
+              return updated ? { ...place, photos: updated.photos } : place;
+            })
+          );
+          persistLoadedMapPlaces(withDriveReferences);
+          setMapNotice('사진을 기기와 Google Drive에 저장했습니다. 분석이 이어집니다.');
+          void (async () => {
+            for (const item of uploaded) {
+              try {
+                await requestPhotoPipeline(user, { driveFileId: item.id });
+              } catch {
+                // Drive 저장은 유지하고, 분석 실패는 시험 화면에서 다시 시도할 수 있다.
+              }
+            }
+          })();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Google Drive 저장에 실패했습니다.';
+          setMapNotice(`사진은 기기에 저장했습니다. ${message}`);
+        }
+      }
     } finally {
       setPhotoBusyPlaceId(null);
     }
@@ -1075,7 +1128,8 @@ export default function HomePage() {
   const handleToggleHighContrast = () => {
     setHighContrast((current) => {
       const next = !current;
-      window.localStorage.setItem('noeul.highContrast.v1', next ? '1' : '0');
+      window.localStorage.setItem(scopedStorageKey('noeul.highContrast.v1'), next ? '1' : '0');
+      markCloudDataChanged('settings');
       document.documentElement.classList.toggle('high-contrast', next);
       return next;
     });
@@ -1624,6 +1678,7 @@ export default function HomePage() {
           <span className="hidden text-base font-semibold sm:inline text-slate-700">시니어 걷기 내비</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <AuthControls />
           {batterySupported && batteryPercent != null && (
             <div
               className={`flex items-center px-2 text-sm font-black rounded-md min-h-10 ${
