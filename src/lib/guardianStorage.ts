@@ -1,4 +1,4 @@
-import { markCloudDataChanged, scopedStorageKey } from '@/lib/cloudSync/storageScope';
+import { scopedStorageKey } from '@/lib/cloudSync/storageScope';
 
 const KEY = 'noeul.guardianPhone.v1';
 
@@ -15,7 +15,6 @@ export function saveGuardianPhone(phone: string): void {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(scopedStorageKey(KEY), phone.trim());
-    markCloudDataChanged('guardian');
   } catch {
     // ignore
   }

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { analyzePhotoWithAi } from '@/lib/photoAi';
 import { PhotoAiAnalysis } from '@/types/place';
 
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as {
@@ -12,7 +15,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '분석할 사진이 없습니다.' }, { status: 400 });
     }
 
-    const slice = body.photos.slice(0, 8);
+    const slice = body.photos.slice(0, 24);
     const results: { id: string; analysis: PhotoAiAnalysis | null; notes: string[] }[] = [];
 
     for (const photo of slice) {

@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import PwaProvider from "@/components/PwaProvider";
-import WakeLockProvider from "@/components/WakeLockProvider";
 import AuthProvider from "@/components/AuthProvider";
 
 const geistSans = Geist({
@@ -16,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "노을 - 시니어 걷기 내비",
-  applicationName: "노을 - 시니어 걷기 내비",
-  description: "갈맷길·제주올레길·둘레길을 안전하게 따라가는 시니어 전용 걷기 내비게이션",
+  title: "노을 - 여행지도 · 블로그",
+  applicationName: "노을",
+  description: "장소를 모아 여행지도를 만들고, 사진으로 여행 블로그를 쓰는 앱",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
@@ -49,9 +48,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <PwaProvider>
-          <AuthProvider>
-            <WakeLockProvider>{children}</WakeLockProvider>
-          </AuthProvider>
+          <AuthProvider>{children}</AuthProvider>
         </PwaProvider>
       </body>
     </html>

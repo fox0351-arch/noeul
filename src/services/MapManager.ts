@@ -154,8 +154,51 @@ export class MapManager {
   private locateBusy = false;
   private weakGps = false;
   private showMapFabs = false;
+  /** 홈 여행지도: GPS 카메라/유저 마커를 끄고 setCenter만 씁니다. */
+  private travelMode = false;
+  private pendingCenter: { lat: number; lng: number; zoom: number } | null = null;
 
   private constructor() {}
+
+  setTravelMode(on: boolean): void {
+    this.travelMode = on;
+    if (!on) return;
+    this.disableMapFabs();
+    this.stopCameraLoop();
+    this.unsubscribeStore?.();
+    this.unsubscribeStore = null;
+    this.userMarker?.setMap(null);
+    this.userMarker = null;
+    this.trackLine?.setMap(null);
+    this.trackLine = null;
+    this.trackPath = [];
+    useLocationStore.getState().setFollowMode(false);
+  }
+
+  getMapCenter(): { lat: number; lng: number } | null {
+    const center = this.map?.getCenter();
+    if (center) return { lat: center.lat(), lng: center.lng() };
+    if (this.renderedLat != null && this.renderedLng != null) {
+      return { lat: this.renderedLat, lng: this.renderedLng };
+    }
+    return this.pendingCenter ? { lat: this.pendingCenter.lat, lng: this.pendingCenter.lng } : null;
+  }
+
+  /** 여행 장소 검색/불러오기용. moveCamera(내비)가 아니라 Map.setCenter를 호출합니다. */
+  setMapCenter(lat: number, lng: number, zoom = 14): void {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    this.pendingCenter = { lat, lng, zoom };
+    this.renderedLat = lat;
+    this.renderedLng = lng;
+    const map = this.map;
+    if (!map) return;
+    this.dragPauseUntil = Date.now() + 4000;
+    this.lastCameraAt = Date.now();
+    map.setHeading?.(0);
+    map.setTilt?.(0);
+    map.setCenter({ lat, lng });
+    map.setZoom(zoom);
+  }
 
   async attach(container: HTMLElement, initialCenter: PlaceLocation): Promise<void> {
     this.detach();
@@ -166,9 +209,13 @@ export class MapManager {
     await importLibrary('maps');
     if (!container.isConnected) return;
 
+    const startCenter = this.pendingCenter
+      ? { lat: this.pendingCenter.lat, lng: this.pendingCenter.lng }
+      : { lat: initialCenter.latitude, lng: initialCenter.longitude };
+    const startZoom = this.pendingCenter?.zoom ?? 13;
     const options: google.maps.MapOptions = {
-      center: { lat: initialCenter.latitude, lng: initialCenter.longitude },
-      zoom: 13,
+      center: startCenter,
+      zoom: startZoom,
       heading: 0,
       tilt: 0,
       mapTypeId: google.maps.MapTypeId.ROADMAP,
@@ -176,14 +223,14 @@ export class MapManager {
       streetViewControl: false,
       fullscreenControl: true,
       fullscreenControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
-      rotateControl: true,
+      rotateControl: !this.travelMode,
       rotateControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
       zoomControl: true,
       zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM },
       gestureHandling: 'greedy',
     };
     const vector = google.maps.RenderingType?.VECTOR;
-    if (vector) options.renderingType = vector;
+    if (vector && !this.travelMode) options.renderingType = vector;
 
     const map = new google.maps.Map(container, options) as MapWithCamera;
     map.addListener('dragstart', () => {
@@ -191,15 +238,22 @@ export class MapManager {
     });
     this.map = map;
     this.lastCameraAt = 0;
-    if (this.showMapFabs) this.mountFabControl();
+    if (this.showMapFabs && !this.travelMode) this.mountFabControl();
     this.setPlaces(this.places);
     this.setRoute(this.routePoints);
-    this.setReturnPoint(this.returnPoint, this.returnUser);
-    this.bindStore();
-    this.startCameraLoop();
-    const stored = useLocationStore.getState();
-    if (stored.lat != null && stored.lng != null) {
-      this.moveCamera(stored.lat, stored.lng, 17);
+    if (!this.travelMode) {
+      this.setReturnPoint(this.returnPoint, this.returnUser);
+      this.bindStore();
+      this.startCameraLoop();
+      const stored = useLocationStore.getState();
+      if (stored.followMode && stored.lat != null && stored.lng != null) {
+        this.moveCamera(stored.lat, stored.lng, 17);
+      }
+    }
+    if (this.pendingCenter) {
+      this.setMapCenter(this.pendingCenter.lat, this.pendingCenter.lng, this.pendingCenter.zoom);
+    } else if (this.travelMode && this.places.length > 0) {
+      this.fitPlacesBounds(this.places);
     }
   }
 
@@ -353,6 +407,10 @@ export class MapManager {
     if (follow || !id || !this.map) return;
     const place = this.places.find((item) => item.id === id);
     if (!place) return;
+    if (this.travelMode) {
+      this.setMapCenter(place.location.latitude, place.location.longitude, 15);
+      return;
+    }
     this.moveCameraOnce({
       lat: place.location.latitude,
       lng: place.location.longitude,
@@ -395,6 +453,32 @@ export class MapManager {
       heading: hasBearing ? 0 : null,
       zoom,
     });
+  }
+
+  /** 현재 장소 마커가 화면에 들어오게 맞춥니다. */
+  fitPlacesBounds(places = this.places): void {
+    const points = (places.length ? places : this.places).filter(
+      (place) =>
+        Number.isFinite(place.location?.latitude) && Number.isFinite(place.location?.longitude)
+    );
+    if (points.length === 0) return;
+    if (points.length === 1) {
+      this.setMapCenter(points[0].location.latitude, points[0].location.longitude, 14);
+      return;
+    }
+    const map = this.map;
+    if (!map || !window.google) {
+      this.setMapCenter(points[0].location.latitude, points[0].location.longitude, 13);
+      return;
+    }
+    const bounds = new google.maps.LatLngBounds();
+    for (const place of points) {
+      bounds.extend({ lat: place.location.latitude, lng: place.location.longitude });
+    }
+    map.setHeading?.(0);
+    map.setTilt?.(0);
+    map.fitBounds(bounds, 72);
+    this.fitBoundsCount += 1;
   }
 
   /** 그린 루트 전체가 화면에 들어오게 맞춥니다. */
@@ -525,6 +609,7 @@ export class MapManager {
   }
 
   private bindStore(): void {
+    if (this.travelMode) return;
     this.unsubscribeStore?.();
     const current = useLocationStore.getState();
     this.lastRecenterId = current.recenterId;
@@ -600,7 +685,7 @@ export class MapManager {
 
   private tickCamera(): void {
     const map = this.map;
-    if (!map) return;
+    if (!map || this.travelMode) return;
     const state = useLocationStore.getState();
     if (!state.followMode || state.lat == null || state.lng == null) return;
     if (Date.now() < this.dragPauseUntil) return;

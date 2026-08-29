@@ -1,14 +1,18 @@
 import { PlaceItem, PlacePhoto } from '@/types/place';
-import { isTravelRoute } from '@/types/route';
 import { TravelMap, TravelMapChecklistItem } from '@/types/travelMap';
 import { markCloudDataChanged, scopedStorageKey } from '@/lib/cloudSync/storageScope';
 
 const STORAGE_KEY = 'noeul.travelMaps.v1';
+const IDB_NAME = 'noeul-travel-maps';
+const IDB_STORE = 'kv';
+const IDB_KEY = 'store.v1';
 
 interface TravelMapStore {
   version: 1;
   maps: TravelMap[];
 }
+
+let memoryStore: TravelMapStore | null = null;
 
 function isPlacePhoto(value: unknown): value is PlacePhoto {
   if (!value || typeof value !== 'object') return false;
@@ -69,15 +73,16 @@ function coerceTravelMap(value: unknown): TravelMap | null {
   const places = Array.isArray(map.places)
     ? map.places.map(coercePlaceItem).filter((place): place is PlaceItem => place !== null)
     : [];
-  const route = map.route && isTravelRoute(map.route) ? map.route : undefined;
-  if (places.length === 0 && !route) return null;
+  if (places.length === 0) return null;
   return {
-    ...map,
-    places,
+    id: map.id,
+    title: map.title,
+    createdAt: map.createdAt,
     updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : map.createdAt,
+    places: places.map(normalizePlaceItem),
+    sourceQuery: typeof map.sourceQuery === 'string' ? map.sourceQuery : undefined,
     memo: typeof map.memo === 'string' ? map.memo : undefined,
     checklist: Array.isArray(map.checklist) ? map.checklist.filter(isChecklistItem) : undefined,
-    route,
   };
 }
 
@@ -85,7 +90,64 @@ function emptyStore(): TravelMapStore {
   return { version: 1, maps: [] };
 }
 
-function readStore(): TravelMapStore {
+function newestUpdatedAt(store: TravelMapStore): string {
+  return store.maps.reduce((latest, map) => (map.updatedAt > latest ? map.updatedAt : latest), '');
+}
+
+function pickRicherStore(a: TravelMapStore, b: TravelMapStore): TravelMapStore {
+  if (a.maps.length !== b.maps.length) return a.maps.length > b.maps.length ? a : b;
+  return newestUpdatedAt(a) >= newestUpdatedAt(b) ? a : b;
+}
+
+function openMapsDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(IDB_NAME, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(IDB_STORE)) {
+        request.result.createObjectStore(IDB_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('indexedDB'));
+  });
+}
+
+async function readIdbStore(): Promise<TravelMapStore | null> {
+  if (typeof window === 'undefined' || !window.indexedDB) return null;
+  try {
+    const db = await openMapsDb();
+    const parsed = await new Promise<unknown>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const request = tx.objectStore(IDB_STORE).get(scopedStorageKey(IDB_KEY));
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    if (!parsed || typeof parsed !== 'object') return null;
+    const mapsValue = (parsed as { maps?: unknown }).maps;
+    if (!Array.isArray(mapsValue)) return null;
+    return {
+      version: 1,
+      maps: mapsValue.map(coerceTravelMap).filter((map): map is TravelMap => map !== null),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeIdbStore(store: TravelMapStore): Promise<void> {
+  if (typeof window === 'undefined' || !window.indexedDB) return;
+  const db = await openMapsDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.objectStore(IDB_STORE).put(store, scopedStorageKey(IDB_KEY));
+  });
+  db.close();
+}
+
+function readLocalStore(): TravelMapStore {
   if (typeof window === 'undefined') return emptyStore();
 
   try {
@@ -102,21 +164,52 @@ function readStore(): TravelMapStore {
       version: 1,
       maps: mapsValue
         .map(coerceTravelMap)
-        .filter((map): map is TravelMap => map !== null)
-        .map((map) => ({
-          ...map,
-          places: map.places.map(normalizePlaceItem),
-        })),
+        .filter((map): map is TravelMap => map !== null),
     };
   } catch {
     return emptyStore();
   }
 }
 
-function writeStore(store: TravelMapStore): void {
+function writeLocalStore(store: TravelMapStore): void {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(scopedStorageKey(STORAGE_KEY), JSON.stringify(store));
+}
+
+function readStore(): TravelMapStore {
+  if (memoryStore) return memoryStore;
+  const local = readLocalStore();
+  memoryStore = local;
+  return local;
+}
+
+function writeStore(store: TravelMapStore): void {
+  if (typeof window === 'undefined') return;
+  memoryStore = store;
+  try {
+    writeLocalStore(store);
+  } catch {
+    // 사진이 크면 localStorage 한도를 넘을 수 있습니다. IndexedDB가 원본을 보관합니다.
+  }
+  void writeIdbStore(store);
   markCloudDataChanged('travelMaps');
+}
+
+export async function hydrateTravelMaps(): Promise<TravelMap[]> {
+  if (typeof window === 'undefined') return [];
+  const local = readLocalStore();
+  const idb = await readIdbStore();
+  const next = idb ? pickRicherStore(idb, local) : local;
+  memoryStore = next;
+  try {
+    writeLocalStore(next);
+  } catch {
+    // IndexedDB만으로 복원 가능
+  }
+  if (idb == null || pickRicherStore(next, idb) === next) {
+    void writeIdbStore(next);
+  }
+  return next.maps;
 }
 
 export function loadTravelMaps(): TravelMap[] {
@@ -131,7 +224,7 @@ export function saveTravelMap(map: TravelMap): TravelMap[] {
   const store = readStore();
   const next: TravelMapStore = {
     version: 1,
-    maps: [...store.maps, map],
+    maps: [...store.maps.filter((item) => item.id !== map.id), map],
   };
   writeStore(next);
   return next.maps;
@@ -142,8 +235,6 @@ export function updateTravelMap(
   updates: Pick<TravelMap, 'title' | 'places' | 'sourceQuery'> & {
     memo?: string;
     checklist?: TravelMap['checklist'];
-    /** null이면 루트만 제거합니다. undefined면 기존 루트를 유지합니다. */
-    route?: TravelMap['route'] | null;
   }
 ): TravelMap[] | null {
   const store = readStore();
@@ -163,30 +254,10 @@ export function updateTravelMap(
             sourceQuery: updates.sourceQuery,
             memo: updates.memo !== undefined ? updates.memo : map.memo,
             checklist: updates.checklist !== undefined ? updates.checklist : map.checklist,
-            route: updates.route === undefined ? map.route : updates.route ?? undefined,
             updatedAt: now,
           }
         : map
     ),
-  };
-  writeStore(next);
-  return next.maps;
-}
-
-export function clearTravelMapRoute(id: string): TravelMap[] | null {
-  const store = readStore();
-  if (!store.maps.some((map) => map.id === id)) {
-    return null;
-  }
-
-  const now = new Date().toISOString();
-  const next: TravelMapStore = {
-    version: 1,
-    maps: store.maps.map((map) => {
-      if (map.id !== id) return map;
-      const { route: _removed, ...rest } = map;
-      return { ...rest, updatedAt: now };
-    }),
   };
   writeStore(next);
   return next.maps;
@@ -267,11 +338,7 @@ function parseBackupStore(value: unknown): TravelMapStore | null {
   if (record.version !== 1 || !Array.isArray(record.maps)) return null;
   const maps = record.maps
     .map(coerceTravelMap)
-    .filter((map): map is TravelMap => map !== null)
-    .map((map) => ({
-      ...map,
-      places: map.places.map(normalizePlaceItem),
-    }));
+    .filter((map): map is TravelMap => map !== null);
   if (maps.length === 0) return null;
 
   return {
@@ -290,4 +357,16 @@ export function restoreTravelMapsFromBackup(value: unknown): TravelMap[] | null 
 
   writeStore(store);
   return store.maps;
+}
+
+export function clonePlaces(places: PlaceItem[]): PlaceItem[] {
+  return places.map((place) => ({
+    ...place,
+    location: { ...place.location },
+    types: place.types ? [...place.types] : undefined,
+    photos: place.photos?.map((photo) => ({
+      ...photo,
+      analysis: photo.analysis ? { ...photo.analysis, subjects: [...photo.analysis.subjects], keywords: [...photo.analysis.keywords], visualTags: photo.analysis.visualTags ? [...photo.analysis.visualTags] : undefined } : undefined,
+    })),
+  }));
 }

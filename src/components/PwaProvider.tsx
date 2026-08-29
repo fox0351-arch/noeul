@@ -8,7 +8,7 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
     navigator.serviceWorker
       .register('/sw.js', { scope: '/', updateViaCache: 'none' })
       .catch(() => {
-        // 서비스 워커가 없어도 저장된 루트와 GPS는 동작합니다.
+        // 서비스 워커가 없어도 여행지도 저장은 동작합니다.
       });
   }, []);
 

@@ -43,6 +43,8 @@ export interface PhotoAiAnalysis {
   keywords: string[];
   confidence: number;
   landmark?: string;
+  /** 풍경·인물·바다·산·꽃·건물·길 등 글 생성에 쓰는 시각 태그 */
+  visualTags?: string[];
 }
 
 export interface PlacesSearchResponse {

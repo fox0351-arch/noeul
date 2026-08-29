@@ -258,7 +258,7 @@ export async function generateContentPack(input: {
     };
   } catch {
     const story = inferTravelStory(photos);
-    const draft = fallbackTravelBlog(photos, story, input.galmaetgil);
+    const draft = fallbackTravelBlog(photos, story);
     return {
       story,
       blog: draft,

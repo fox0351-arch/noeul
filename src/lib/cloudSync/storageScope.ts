@@ -2,7 +2,7 @@ const AUTH_SCOPE_KEY = 'noeul.authUid.v1';
 const GUEST_MIGRATION_CLAIM_KEY = 'noeul.guestMigrationClaim.v1';
 const CLOUD_CHANGE_EVENT = 'noeul:cloud-data-changed';
 
-export type CloudDataKind = 'travelMaps' | 'favorites' | 'settings' | 'guardian';
+export type CloudDataKind = 'travelMaps' | 'favorites' | 'settings';
 
 export function getAuthScope(): string | null {
   if (typeof window === 'undefined') return null;
@@ -95,8 +95,6 @@ export function subscribeCloudDataChanges(listener: (kind: CloudDataKind) => voi
 export const CLOUD_SCOPED_BASE_KEYS = [
   'noeul.travelMaps.v1',
   'noeul.manualPlaces.v1',
-  'noeul.guardianPhone.v1',
   'noeul.batterySave.v1',
   'noeul.highContrast.v1',
-  'noeul.activeRoute.v1',
 ] as const;

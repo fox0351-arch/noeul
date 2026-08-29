@@ -1,6 +1,5 @@
 import { collection, doc, getDoc, getDocs, setDoc, writeBatch } from 'firebase/firestore';
 import { getFirebaseServices } from '@/lib/firebase/client';
-import { loadGuardianPhone, saveGuardianPhone } from '@/lib/guardianStorage';
 import { loadManualPlaces, saveManualPlaces } from '@/lib/manualPlacesStorage';
 import { loadBatterySave, saveBatterySave } from '@/lib/navSafety';
 import { loadTravelMaps, replaceTravelMapsForSync } from '@/lib/travelMapStorage';
@@ -27,11 +26,6 @@ type CloudTravelMap = Omit<TravelMap, 'places'> & {
 type CloudSettings = UserSettings & {
   batterySave: boolean;
   highContrast: boolean;
-  updatedAtMs: number;
-};
-
-type CloudGuardian = {
-  phone: string;
   updatedAtMs: number;
 };
 
@@ -237,23 +231,10 @@ async function uploadSettings(uid: string): Promise<void> {
   clearCloudDirtyIfUnchanged(uid, 'settings', settingsDirtyAt);
 }
 
-async function uploadGuardian(uid: string): Promise<void> {
-  const services = getFirebaseServices();
-  if (!services) return;
-  const guardianDirtyAt = getCloudDirtyAt(uid, 'guardian');
-  const guardian: CloudGuardian = {
-    phone: loadGuardianPhone(),
-    updatedAtMs: Date.now(),
-  };
-  await setDoc(doc(services.db, 'users', uid, 'private', 'guardian'), guardian);
-  clearCloudDirtyIfUnchanged(uid, 'guardian', guardianDirtyAt);
-}
-
 export async function uploadLocalUserData(uid: string, kind?: CloudDataKind): Promise<void> {
   if (kind == null || kind === 'travelMaps') await uploadTravelMaps(uid, loadTravelMaps());
   if (kind == null || kind === 'favorites') await uploadFavorites(uid, loadManualPlaces());
   if (kind == null || kind === 'settings') await uploadSettings(uid);
-  if (kind == null || kind === 'guardian') await uploadGuardian(uid);
 }
 
 export async function synchronizeUserData(
@@ -267,14 +248,12 @@ export async function synchronizeUserData(
     travelMaps: getCloudDirtyAt(uid, 'travelMaps'),
     favorites: getCloudDirtyAt(uid, 'favorites'),
     settings: getCloudDirtyAt(uid, 'settings'),
-    guardian: getCloudDirtyAt(uid, 'guardian'),
   };
 
-  const [mapSnapshots, favoritesSnapshot, settingsSnapshot, guardianSnapshot, syncSnapshot] = await Promise.all([
+  const [mapSnapshots, favoritesSnapshot, settingsSnapshot, syncSnapshot] = await Promise.all([
     getDocs(collection(services.db, 'users', uid, 'travelMaps')),
     getDoc(doc(services.db, 'users', uid, 'favorites', 'state')),
     getDoc(doc(services.db, 'users', uid, 'settings', 'prefs')),
-    getDoc(doc(services.db, 'users', uid, 'private', 'guardian')),
     getDoc(doc(services.db, 'users', uid, 'sync', 'state')),
   ]);
 
@@ -346,11 +325,6 @@ export async function synchronizeUserData(
     settingsSnapshot.exists() && getCloudDirtyAt(uid, 'settings') === 0
       ? (settingsSnapshot.data() as CloudSettings)
       : null;
-  const localGuardian = loadGuardianPhone();
-  const cloudGuardian =
-    guardianSnapshot.exists() && getCloudDirtyAt(uid, 'guardian') === 0
-      ? (guardianSnapshot.data() as CloudGuardian)
-      : null;
   const changed =
     JSON.stringify(localMaps) !== JSON.stringify(mergedMaps) ||
     JSON.stringify(localPlaces) !== JSON.stringify(mergedPlaces) ||
@@ -361,14 +335,12 @@ export async function synchronizeUserData(
           headingUp: cloudSettings.headingUp,
           batterySave: Boolean(cloudSettings.batterySave),
           highContrast: Boolean(cloudSettings.highContrast),
-        })) ||
-    (cloudGuardian != null && localGuardian !== (cloudGuardian.phone ?? ''));
+        }));
 
   const localChangedDuringSync =
     getCloudDirtyAt(uid, 'travelMaps') !== startingRevisions.travelMaps ||
     getCloudDirtyAt(uid, 'favorites') !== startingRevisions.favorites ||
-    getCloudDirtyAt(uid, 'settings') !== startingRevisions.settings ||
-    getCloudDirtyAt(uid, 'guardian') !== startingRevisions.guardian;
+    getCloudDirtyAt(uid, 'settings') !== startingRevisions.settings;
   if (localChangedDuringSync) {
     if (attempt >= 2) throw new Error('Local data changed repeatedly during cloud sync');
     return synchronizeUserData(uid, attempt + 1, driveAccessToken);
@@ -385,7 +357,6 @@ export async function synchronizeUserData(
     saveBatterySave(Boolean(cloudSettings.batterySave));
     writeHighContrast(Boolean(cloudSettings.highContrast));
   }
-  if (cloudGuardian) saveGuardianPhone(cloudGuardian.phone ?? '');
 
   await uploadLocalUserData(uid);
   return changed;

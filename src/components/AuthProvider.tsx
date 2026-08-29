@@ -184,7 +184,6 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
               markCloudDataChanged('travelMaps');
               markCloudDataChanged('favorites');
               markCloudDataChanged('settings');
-              markCloudDataChanged('guardian');
             }
           }
           activeUidRef.current = uid;

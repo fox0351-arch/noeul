@@ -1,6 +1,6 @@
 // Wake Lock는 페이지(WakeLockProvider)가 담당합니다. SW는 화면을 켜 둘 수 없습니다.
 // 대신 오래된 지도 스크립트를 붙잡지 않고, 관리자 시뮬 HTML을 홈 캐시에 덮어쓰지 않습니다.
-const CACHE_NAME = 'noeul-walk-v19';
+const CACHE_NAME = 'noeul-travel-v2';
 const PRECACHE = [
   '/',
   '/manifest.json',
@@ -94,25 +94,6 @@ async function handleFetch(request, url) {
   }
 }
 
-async function handleShareTarget(request) {
-  try {
-    const formData = await request.formData();
-    const values = Array.from(formData.values());
-    const file = values.find((value) => value instanceof File);
-    if (file instanceof File) {
-      const cache = await caches.open('noeul-share-target');
-      await cache.put(
-        '/__shared_file__',
-        new Response(file, {
-          headers: {
-            'Content-Type': file.type || 'application/octet-stream',
-            'X-Filename': encodeURIComponent(file.name || 'shared.gpx'),
-          },
-        })
-      );
-    }
-  } catch (error) {
-    console.error('[노을-share] share target failed', error);
-  }
-  return Response.redirect('/?shared=gpx', 303);
+async function handleShareTarget() {
+  return Response.redirect('/', 303);
 }

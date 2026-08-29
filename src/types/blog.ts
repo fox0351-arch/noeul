@@ -10,6 +10,11 @@ export interface PhotoAnalysis {
   error?: string;
   capturedAt?: string;
   lastModified?: number;
+  order?: number;
+  address?: string;
+  scene?: string;
+  landmark?: string;
+  visualTags?: string[];
 }
 
 export interface TravelStory {

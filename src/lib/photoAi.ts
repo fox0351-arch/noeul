@@ -1,5 +1,6 @@
-import { PhotoAiAnalysis, PhotoAiScene } from '@/types/place';
+import { classifyVisualTags } from '@/lib/blog/visualTags';
 import { parseGeminiAnalysisResult } from '@/lib/geminiAnalysis';
+import { PhotoAiAnalysis, PhotoAiScene } from '@/types/place';
 import type { GeminiAnalysisResult } from '@/types/geminiAnalysis';
 
 const SCENES: PhotoAiScene[] = [
@@ -57,6 +58,7 @@ export function normalizeAnalysis(value: unknown): PhotoAiAnalysis | null {
     keywords?: unknown;
     confidence?: unknown;
     landmark?: unknown;
+    visualTags?: unknown;
   };
   const caption = cleanCaption(record.caption);
   if (!caption) return null;
@@ -65,12 +67,23 @@ export function normalizeAnalysis(value: unknown): PhotoAiAnalysis | null {
     : [];
   const keywords = asKeywords(record.keywords);
   const landmark = typeof record.landmark === 'string' ? record.landmark.trim().slice(0, 40) : '';
+  const visualTags = classifyVisualTags({
+    scene: asScene(record.scene),
+    caption,
+    subjects,
+    keywords,
+    landmark,
+  });
+  const extraTags = Array.isArray(record.visualTags)
+    ? record.visualTags.filter((item): item is string => typeof item === 'string')
+    : [];
   return {
     scene: asScene(record.scene),
     caption,
     subjects,
     keywords: keywords.length ? keywords : subjects.slice(0, 4),
     confidence: asConfidence(record.confidence),
+    visualTags: Array.from(new Set([...visualTags, ...extraTags])).slice(0, 6),
     ...(landmark ? { landmark } : {}),
   };
 }
@@ -147,16 +160,15 @@ async function analyzeWithGemini(
 ): Promise<{ analysis: PhotoAiAnalysis | null; raw: unknown }> {
   const prompt = `너는 여행 사진 분석기다. 사진에서 보이는 것을 추정해 JSON만 출력하라.
 광고, 추천, 과장 문구 금지.
-caption은 한국어 한 문장, 과거형 나레이션.
+caption은 한국어 한 문장, 과거형 나레이션. 이 사진에만 있는 구체적인 대상(색, 물체, 사람, 날씨)을 넣는다.
 scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
+visualTags는 해당하는 것만: 풍경, 인물, 바다, 산, 꽃, 건물, 길.
 peopleCount는 보이는 사람 수(숫자).
-mood는 짧은 분위기 설명(예: 여행 / 관광 / 기념사진).
-tags는 #로 시작하는 추천 태그.
+mood는 짧은 분위기 설명.
 blogKeywords는 블로그용 한국어 키워드.
-cardNewsCopy는 카드뉴스용 짧은 한 문장.
 장소 힌트: ${placeName}
 메모 힌트: ${placeMemo || '없음'}
-형식: {"scene":"place","caption":"...","subjects":["태극기"],"keywords":["국회의사당"],"confidence":0.7,"landmark":"국회의사당","placeName":"국회의사당","peopleCount":2,"mood":"여행 / 관광 / 기념사진","estimatedLocation":"서울 여의도","objects":["국회의사당","태극기"],"tags":["#국회의사당","#서울여행"],"blogKeywords":["국회의사당","부부여행"],"cardNewsCopy":"..."}`;
+형식: {"scene":"place","caption":"...","subjects":["태극기"],"keywords":["국회의사당"],"confidence":0.7,"landmark":"국회의사당","visualTags":["건물","인물"],"placeName":"국회의사당","peopleCount":2,"mood":"여행","estimatedLocation":"서울 여의도","objects":["국회의사당"],"tags":["#국회의사당"],"blogKeywords":["국회의사당"]}`;
 
   const models = await listGeminiModels(apiKey, notes);
   const versions = ['v1beta', 'v1'] as const;
@@ -342,6 +354,7 @@ export async function generateGeminiJsonObject(input: {
   prompt: string;
   parsed?: { mimeType: string; data: string };
   maxOutputTokens?: number;
+  temperature?: number;
 }): Promise<unknown | null> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) return null;
@@ -362,7 +375,7 @@ export async function generateGeminiJsonObject(input: {
           body: JSON.stringify({
             contents: [{ parts }],
             generationConfig: {
-              temperature: 0.5,
+              temperature: input.temperature ?? 0.5,
               maxOutputTokens: input.maxOutputTokens ?? 4096,
               responseMimeType: 'application/json',
             },
