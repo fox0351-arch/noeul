@@ -105,6 +105,36 @@ const lengthOk =
   olleBlog.body.length <= 1800 &&
   songhaeBlog.body.length >= 1200 &&
   songhaeBlog.body.length <= 1800;
+
+const windRepeat = (body: string) => (body.match(/스쳤다/g) || []).length;
+const bodyPartPad =
+  /바람이 (옷깃|어깨|등|귓가|귀|팔목|무릎)/.test(olleBlog.body) ||
+  /바람이 (옷깃|어깨|등|귓가|귀|팔목|무릎)/.test(songhaeBlog.body);
+
+const taebaek = photoPlace(
+  'taebaek',
+  '황지연못',
+  '강원특별자치도 태백시',
+  { latitude: 37.164, longitude: 128.986 },
+  '태백',
+  Array.from({ length: 10 }, () => ({
+    scene: 'landscape' as PhotoAiScene,
+    caption: '',
+    subjects: [] as string[],
+    visualTags: [] as string[],
+  }))
+);
+const taebaekBlog = generateTravelBlogEssay({
+  title: '태백시',
+  memo: '',
+  checklist: [],
+  places: [taebaek],
+  query: '태백시',
+});
+const taebaekWind = windRepeat(taebaekBlog.body);
+const taebaekPad = /팔목을 스쳤다|무릎을 스쳤다|귓가를 스쳤다|귀를 스쳤다/.test(taebaekBlog.body);
+const taebaekScenes = (taebaekBlog.body.match(/황지연못/g) || []).length;
+
 const amenitiesOk =
   /주차/.test(olleBlog.body) &&
   /차박/.test(olleBlog.body) &&
@@ -131,6 +161,14 @@ const report = {
   songhaeTitle: songhaeBlog.title,
   ollePhotoCount: olleBlog.photoCount,
   songhaePhotoCount: songhaeBlog.photoCount,
+  olleWind: windRepeat(olleBlog.body),
+  songhaeWind: windRepeat(songhaeBlog.body),
+  bodyPartPad,
+  taebaekChars: taebaekBlog.body.length,
+  taebaekWind,
+  taebaekPad,
+  taebaekPhotoCount: taebaekBlog.photoCount,
+  taebaekScenes,
 };
 
 console.log(JSON.stringify(report, null, 2));
@@ -142,3 +180,12 @@ if (!olleHasOrder || !songhaeHasOrder) throw new Error('photo order missing');
 if (diaryBanned) throw new Error('diary/AI list pattern found');
 if (!lengthOk) throw new Error('review length must be 1200-1800');
 if (!amenitiesOk) throw new Error('parking/camping/restaurants missing');
+if (windRepeat(olleBlog.body) > 1 || windRepeat(songhaeBlog.body) > 1) {
+  throw new Error('스쳤다 repeated');
+}
+if (bodyPartPad) throw new Error('body-part wind padding found');
+if (taebaekBlog.photoCount !== 10) throw new Error('taebaek photos not all used');
+if (taebaekWind > 1 || taebaekPad) throw new Error('taebaek wind padding repeated');
+if (taebaekBlog.body.length < 1200 || taebaekBlog.body.length > 1800) {
+  throw new Error(`taebaek review length ${taebaekBlog.body.length}`);
+}

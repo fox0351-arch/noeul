@@ -123,7 +123,7 @@ export function analysisFromVisionLabels(
     return { scene: 'camping', caption: '밤은 차 안에서 하늘을 가깝게 두고 보냈다.', subjects: labels.slice(0, 4), keywords: labels.slice(0, 4), confidence: 0.5 };
   }
   if (has(/beach|sea|ocean|coast|mountain|sky|landscape|바다|산|풍경/)) {
-    return { scene: 'landscape', caption: '바람이 스치는 풍경 앞에 잠시 걸음을 멈추었다.', subjects: labels.slice(0, 4), keywords: labels.slice(0, 4), confidence: 0.4 };
+    return { scene: 'landscape', caption: `${placeName || '그 자리'}의 풍경이 한 장에 남아 있었다.`, subjects: labels.slice(0, 4), keywords: labels.slice(0, 4), confidence: 0.4 };
   }
   if (labels[0]) {
     return {
@@ -173,7 +173,8 @@ async function analyzeWithGemini(
   const prompt = `너는 여행 사진 분석기다. 사진에서 보이는 것만 추정해 JSON만 출력하라.
 광고, 추천, 과장 문구 금지.
 caption은 한국어 한 문장, 과거형 나레이션. 이 사진에만 있는 풍경·장소 특징·날씨·시간대·분위기·색감·사람 유무를 구체적으로 넣는다.
-예: "나무 사이로 푸른 빛이 들어왔고, 흐린 바람이 등을 스쳤다."
+예: "전나무 사이로 흰 안개가 낮게 깔려 있었고, 멀리 능선만 흐렸다."
+"스쳤다" 같은 상투 동사와 옷깃/어깨/등/귓가/팔목/무릎 반복은 쓰지 마라.
 scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
 visualTags는 해당하는 것만: 풍경, 인물, 바다, 산, 꽃, 건물, 길.
 peopleCount는 보이는 사람 수(숫자). 없으면 0.

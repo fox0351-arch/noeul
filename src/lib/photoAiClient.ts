@@ -1,5 +1,31 @@
 import { PlaceItem, PhotoAiAnalysis } from '@/types/place';
 
+type PendingPhoto = {
+  id: string;
+  dataUrl: string;
+  placeName: string;
+  placeMemo?: string;
+};
+
+async function requestAnalysis(photos: PendingPhoto[]): Promise<Map<string, PhotoAiAnalysis>> {
+  const byId = new Map<string, PhotoAiAnalysis>();
+  const response = await fetch('/api/photos/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ photos }),
+  });
+  if (!response.ok) return byId;
+  const payload = (await response.json()) as {
+    results?: { id?: string; analysis?: PhotoAiAnalysis | null }[];
+  };
+  payload.results?.forEach((item) => {
+    if (item.id && item.analysis?.caption) {
+      byId.set(item.id, item.analysis);
+    }
+  });
+  return byId;
+}
+
 export async function analyzePlacePhotos(places: PlaceItem[]): Promise<PlaceItem[]> {
   const pending = places.flatMap((place) =>
     (place.photos ?? [])
@@ -16,25 +42,25 @@ export async function analyzePlacePhotos(places: PlaceItem[]): Promise<PlaceItem
 
   const byId = new Map<string, PhotoAiAnalysis>();
 
-  for (let index = 0; index < pending.length; index += 4) {
-    const chunk = pending.slice(index, index + 4);
+  for (let index = 0; index < pending.length; index += 2) {
+    const chunk = pending.slice(index, index + 2);
     try {
-      const response = await fetch('/api/photos/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ photos: chunk }),
-      });
-      if (!response.ok) continue;
-      const payload = (await response.json()) as {
-        results?: { id?: string; analysis?: PhotoAiAnalysis | null }[];
-      };
-      payload.results?.forEach((item) => {
-        if (item.id && item.analysis?.caption) {
-          byId.set(item.id, item.analysis);
-        }
-      });
+      const got = await requestAnalysis(chunk);
+      got.forEach((analysis, id) => byId.set(id, analysis));
+      const missing = chunk.filter((photo) => !byId.has(photo.id));
+      for (const photo of missing) {
+        const single = await requestAnalysis([photo]);
+        single.forEach((analysis, id) => byId.set(id, analysis));
+      }
     } catch {
-      continue;
+      for (const photo of chunk) {
+        try {
+          const single = await requestAnalysis([photo]);
+          single.forEach((analysis, id) => byId.set(id, analysis));
+        } catch {
+          continue;
+        }
+      }
     }
   }
 

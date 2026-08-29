@@ -3,6 +3,7 @@ import { markdownToHtml, proseCharCount, toMarkdownDraft } from '@/lib/blog/mark
 import { compactPhotoFacts, enrichPhotoAnalyses, type TripBlogContext } from '@/lib/blog/photoFacts';
 import { inferTravelStory } from '@/lib/blog/travelStory';
 import { classifyVisualTags } from '@/lib/blog/visualTags';
+import { stripRepeatedNarration } from '@/lib/travelBlogEssay';
 import type { BlogDraft, BlogRecommendations, BlogSeo, PhotoAnalysis, TravelStory } from '@/types/blog';
 import type { GalmaetgilPlaceMatch } from '@/types/galmaetgilMatch';
 
@@ -69,7 +70,7 @@ function sceneSentence(photo: PhotoAnalysis, place: string): string {
   const caption = photo.description?.trim();
   if (caption) return caption.endsWith('.') || caption.endsWith('다') ? caption : `${caption}.`;
   if (tags.includes('인물') && object) return `${place}에서 ${object}가 눈에 들어왔다.`;
-  if (tags.includes('바다')) return `${place}의 물결이 발끝까지 밀려왔다. 바람이 옷깃을 스쳤다.`;
+  if (tags.includes('바다')) return `${place}의 물결이 발끝까지 밀려왔다.`;
   if (tags.includes('산')) return `${place}의 능선이 눈에 들어왔다. 그늘 아래 잠시 머물렀다.`;
   if (tags.includes('꽃')) return `${place} 가장자리에 꽃이 한 줄로 피어 있었다.`;
   if (tags.includes('건물')) return `${place}의 건물이 낮게 자리를 지켰다.`;
@@ -161,12 +162,40 @@ function joinBody(parts: string[]): string {
 
 function padProse(text: string, extras: string[], minLength = MIN_CHARS): string {
   let body = text.trim();
-  let i = 0;
-  while (body.length < minLength && i < 12) {
-    body = `${body}\n\n${extras[i % extras.length]}`;
-    i += 1;
+  for (const extra of extras) {
+    if (body.length >= minLength) break;
+    const line = extra.trim();
+    if (!line) continue;
+    if (body.includes(line.slice(0, 16))) continue;
+    body = `${body}\n\n${line}`;
   }
   return body;
+}
+
+function extrasFromPhotos(photos: PhotoAnalysis[], region: string): string[] {
+  const extras: string[] = [];
+  const seen = new Set<string>();
+  for (const photo of photos) {
+    const place = photo.place?.trim() || region;
+    const object = photo.objects.find((item) => item && !seen.has(item));
+    const tag = photo.visualTags?.find((item) => item && !seen.has(`tag:${item}`));
+    const keyword = photo.keywords.find((item) => item && item.length >= 2 && !seen.has(item));
+    if (object) {
+      seen.add(object);
+      extras.push(`${place}에서 ${object}가 한 컷으로 남았다.`);
+      continue;
+    }
+    if (tag) {
+      seen.add(`tag:${tag}`);
+      extras.push(`${photo.order}번째 사진은 ${tag} 쪽으로 시선을 끌었다.`);
+      continue;
+    }
+    if (keyword) {
+      seen.add(keyword);
+      extras.push(`${place}의 ${keyword}이 짧게 보였다.`);
+    }
+  }
+  return extras;
 }
 
 function assembleDraft(input: {
@@ -179,6 +208,7 @@ function assembleDraft(input: {
   seo: BlogSeo;
   recommendations: BlogRecommendations;
   parking?: string;
+  photoExtras?: string[];
 }): BlogDraft {
   let intro = input.intro.trim();
   let storyText = input.story.trim();
@@ -186,6 +216,7 @@ function assembleDraft(input: {
   let closing = input.closing.trim();
   const notes = formatPracticalNotes(input.recommendations, input.parking || fallbackAmenity().parking);
   const extras = [
+    ...(input.photoExtras || []),
     places ? `${places} 사이 풍경이 천천히 바뀌었다.` : '발걸음을 재촉하지 않아도 장면은 남았다.',
     '벤치가 보이는 자리에서 숨을 고른 뒤, 다시 길이 이어졌다.',
     '해가 기울어도 속도는 그대로였다. 걸었던 하루면 충분했다.',
@@ -193,12 +224,19 @@ function assembleDraft(input: {
   const storyMax = Math.max(700, MAX_CHARS - notes.length - 2);
   const storyMin = Math.max(400, MIN_CHARS - notes.length - 2);
   let storyBody = padProse(joinBody([intro, storyText, places, closing]), extras, storyMin);
+  storyBody = stripRepeatedNarration(storyBody);
+  if (storyBody.length < storyMin) {
+    storyBody = padProse(storyBody, extras, storyMin);
+    storyBody = stripRepeatedNarration(storyBody);
+  }
   if (storyBody.length > storyMax) {
     const sliced = storyBody.slice(0, storyMax);
     const cut = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('다.') + 1);
     storyBody = (cut > 400 ? sliced.slice(0, cut + 1) : sliced).trim();
   }
-  const prose = clipProse(`${storyBody}\n\n${notes}`.trim().replace(/있습니다/g, '보였다').replace(/입니다/g, '였다'));
+  const prose = clipProse(
+    stripRepeatedNarration(`${storyBody}\n\n${notes}`.trim().replace(/습니다/g, '보였다').replace(/입니다/g, '였다'))
+  );
   const markdown = toMarkdownDraft({
     title: input.title,
     intro,
@@ -229,7 +267,7 @@ export function fallbackTravelBlog(
   story: TravelStory,
   trip?: TripBlogContext
 ): BlogDraft {
-  const analyzed = enrichPhotoAnalyses(photos).filter((photo) => photo.status === 'analyzed' || photo.description);
+  const analyzed = enrichPhotoAnalyses(photos);
   const placeNames = trip?.places.map((place) => place.name) ?? story.route;
   const mainPlace = placeNames[0] || analyzed[0]?.place || '여행지';
   const region = regionHint(analyzed, trip);
@@ -240,10 +278,8 @@ export function fallbackTravelBlog(
     .map((photo, index) => {
       const name = photo.place || mainPlace;
       const seen = sceneSentence(photo, name);
-      if (index === 0) {
-        return `${name}에서 하루가 열렸다. ${seen}`;
-      }
-      return `${name}으로 길이 이어졌다. ${seen}`;
+      if (index === 0) return `${name}에서 하루가 열렸다. ${seen}`;
+      return seen.startsWith(name) ? seen : `${name}. ${seen}`;
     })
     .join('\n\n');
   const storyText =
@@ -269,6 +305,7 @@ export function fallbackTravelBlog(
     seo: { keywords: [], hashtags: [], searchQueries: [] },
     recommendations: rec,
     parking: amenity.parking,
+    photoExtras: extrasFromPhotos(analyzed, region),
   });
 }
 
@@ -295,12 +332,13 @@ function buildPrompt(photos: PhotoAnalysis[], story: TravelStory, trip?: TripBlo
 관광지 안내문처럼 쓰지 마라.
 
 필수 규칙:
-- 과거형 나레이션. 아래 동사를 자연스럽게 섞어 쓴다: 보였다, 스쳤다, 걸었다, 머물렀다, 이어졌다, 눈에 들어왔다.
-- 예: "수목원 길은 생각보다 길었다. 나무 사이로 들어온 바람이 천천히 등을 밀어주었다."
-- 사진 배열 순서가 곧 이야기 순서다. story는 사진1→사진2 순으로 장면이 바뀐다.
+- 과거형 나레이션. 아래 동사를 장면에 맞게 섞어 쓴다: 보였다, 걸었다, 머물렀다, 이어졌다, 눈에 들어왔다.
+- 예: "수목원 길은 생각보다 길었다. 나무 사이로 흰 안개가 낮게 깔려 있었다."
+- 사진 배열 순서가 곧 이야기 순서다. story는 사진1→사진2 순으로 장면이 바뀐다. 분석 배열의 모든 사진을 빠짐없이 한 장면씩 쓴다.
 - 선택한 관광지 이름과 사진 분석(풍경, 장소 특징, 날씨, 시간대, 분위기, 색감, 사람 유무)을 함께 쓴다. 없는 풍경을 지어내지 마라.
 - 각 사진의 caption, objects, visualTags, scene, mood를 해당 문단에 반영한다.
 - 본문(intro+story+places+closing)은 1200~1800자.
+- 길이를 채우려고 같은 서술 패턴을 반복하지 마라. "스쳤다"는 글 전체에서 최대 한 번. 옷깃/어깨/등/귓가/팔목/무릎을 바꿔 가며 바람을 반복하지 마라.
 - 같은 문장 반복 금지. 금지 문장: ${BANNED_PHRASES.join(' / ')}
 - 이모지 금지.
 - 주차, 차박, 맛집 2~3곳은 존댓말 안내문이 아니라 여행자가 겪은 한 줄로 적는다. 예: "주차는 공영 자리에 차를 두고 조금 걸었다."
@@ -322,9 +360,7 @@ export async function generateTravelBlogDraft(
   draft: BlogDraft;
   fromGemini: boolean;
 }> {
-  const analyzed = enrichPhotoAnalyses(photos)
-    .filter((photo) => photo.status !== 'failed')
-    .slice(0, 50);
+  const analyzed = enrichPhotoAnalyses(photos).slice(0, 50);
   const localStory = inferTravelStory(analyzed);
   const fallback = fallbackTravelBlog(analyzed, localStory, options?.trip);
   const improve = options?.improve?.trim()
@@ -374,6 +410,7 @@ export async function generateTravelBlogDraft(
       seo: { keywords: [], hashtags: [], searchQueries: [] },
       recommendations,
       parking: asText(record.parking) || amenity.parking,
+      photoExtras: extrasFromPhotos(analyzed, regionHint(analyzed, options?.trip)),
     }),
   };
 }
