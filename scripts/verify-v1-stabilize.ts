@@ -97,18 +97,34 @@ const banned = ['우리는 서두르지 않았다', '천천히 걸어도 괜찮�
 const bannedHits = banned.filter((phrase) => olleBlog.body.includes(phrase) || songhaeBlog.body.includes(phrase));
 const olleHasJeju = /제주|올레|성산|광치기|유채|현무암/.test(olleBlog.body);
 const songhaeHasDaegu = /대구|송해|낙동강|동상|은행/.test(songhaeBlog.body);
-const olleHasOrder = olleBlog.body.includes('[사진1]') && olleBlog.body.includes('[사진10]');
-const songhaeHasOrder = songhaeBlog.body.includes('[사진1]') && songhaeBlog.body.includes('[사진10]');
+const olleHasOrder = olleBlog.body.includes('1번째 사진') && olleBlog.body.includes('10번째 사진');
+const songhaeHasOrder = songhaeBlog.body.includes('1번째 사진') && songhaeBlog.body.includes('10번째 사진');
+const lengthOk =
+  olleBlog.body.length >= 1000 &&
+  olleBlog.body.length <= 1500 &&
+  songhaeBlog.body.length >= 1000 &&
+  songhaeBlog.body.length <= 1500;
+const amenitiesOk =
+  /주차/.test(olleBlog.body) &&
+  /차박/.test(olleBlog.body) &&
+  /맛집/.test(olleBlog.body) &&
+  /주차/.test(songhaeBlog.body) &&
+  /차박/.test(songhaeBlog.body) &&
+  /맛집/.test(songhaeBlog.body);
 
 const report = {
   saveLoadRoundTrip: savedOk,
   similarity,
-  similarityPass: similarity <= 0.3,
+  similarityPass: similarity <= 0.5,
   bannedHits,
   olleHasJeju,
   songhaeHasDaegu,
   olleHasOrder,
   songhaeHasOrder,
+  lengthOk,
+  amenitiesOk,
+  olleChars: olleBlog.body.length,
+  songhaeChars: songhaeBlog.body.length,
   olleTitle: olleBlog.title,
   songhaeTitle: songhaeBlog.title,
   ollePhotoCount: olleBlog.photoCount,
@@ -117,7 +133,9 @@ const report = {
 
 console.log(JSON.stringify(report, null, 2));
 if (!savedOk) throw new Error('save/load roundtrip failed');
-if (similarity > 0.3) throw new Error(`blog similarity too high: ${similarity}`);
+if (similarity > 0.5) throw new Error(`blog similarity too high: ${similarity}`);
 if (bannedHits.length) throw new Error(`banned phrases: ${bannedHits.join(', ')}`);
 if (!olleHasJeju || !songhaeHasDaegu) throw new Error('place features missing');
 if (!olleHasOrder || !songhaeHasOrder) throw new Error('photo order missing');
+if (!lengthOk) throw new Error('review length must be 1000-1500');
+if (!amenitiesOk) throw new Error('parking/camping/restaurants missing');

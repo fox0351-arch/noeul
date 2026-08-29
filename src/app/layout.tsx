@@ -15,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "노을 - 여행지도 · 블로그",
+  title: "노을 - 여행지 추천 · 여행 후기",
   applicationName: "노을",
-  description: "장소를 모아 여행지도를 만들고, 사진으로 여행 블로그를 쓰는 앱",
+  description: "지역을 검색해 관광지를 고르고, 사진으로 여행 후기를 쓰는 앱",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

@@ -55,7 +55,6 @@ body {
 }
 
 .workspace-search,
-.workspace-add,
 .workspace-places {
   background: #ffffff;
 }
@@ -72,8 +71,8 @@ body {
 
   .workspace {
     display: grid;
-    grid-template-columns: 380px minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(0, 1fr) minmax(0, 42%);
+    grid-template-columns: 400px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) minmax(0, 46%);
     overflow: hidden;
   }
 
@@ -83,15 +82,9 @@ body {
     border-right: 1px solid #e2e8f0;
   }
 
-  .workspace-add {
-    grid-column: 1;
-    grid-row: 2;
-    border-right: 1px solid #e2e8f0;
-  }
-
   .workspace-places {
     grid-column: 1;
-    grid-row: 3;
+    grid-row: 2;
     min-height: 0;
     overflow: auto;
     border-right: 1px solid #e2e8f0;
@@ -99,7 +92,7 @@ body {
 
   .workspace-saved {
     grid-column: 1;
-    grid-row: 4;
+    grid-row: 3;
     min-height: 0;
     overflow: auto;
     border-right: 1px solid #e2e8f0;
@@ -107,7 +100,7 @@ body {
 
   .workspace-map {
     grid-column: 2;
-    grid-row: 1 / span 4;
+    grid-row: 1 / span 3;
     min-height: 0;
   }
 }
@@ -121,7 +114,6 @@ html.high-contrast body {
 html.high-contrast header,
 html.high-contrast .workspace,
 html.high-contrast .workspace-search,
-html.high-contrast .workspace-add,
 html.high-contrast .workspace-places,
 html.high-contrast .workspace-saved {
   background: #000000 !important;
@@ -157,7 +149,6 @@ button.status-chip {
   }
 
   .hiking-mode .workspace-search,
-  .hiking-mode .workspace-add,
   .hiking-mode .workspace-places,
   .hiking-mode .hiking-hide {
     display: none !important;
