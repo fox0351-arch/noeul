@@ -6,8 +6,8 @@ import { classifyVisualTags } from '@/lib/blog/visualTags';
 import type { BlogDraft, BlogRecommendations, BlogSeo, PhotoAnalysis, TravelStory } from '@/types/blog';
 import type { GalmaetgilPlaceMatch } from '@/types/galmaetgilMatch';
 
-const MIN_CHARS = 1000;
-const MAX_CHARS = 1500;
+const MIN_CHARS = 1200;
+const MAX_CHARS = 1800;
 
 const BANNED_PHRASES = [
   '우리는 서두르지 않았다',
@@ -15,6 +15,12 @@ const BANNED_PHRASES = [
   '파도는 같은 자리를 밀려오지만',
   '오늘의 동선이었다',
   '풍경보다 사람이 더 기억에 남았다',
+  '방문했습니다',
+  '좋았습니다',
+  '추천합니다',
+  '유명합니다',
+  '관광지입니다',
+  '아름다운 관광지',
 ];
 
 function asText(value: unknown): string {
@@ -61,14 +67,14 @@ function sceneSentence(photo: PhotoAnalysis, place: string): string {
       });
   const object = photo.objects?.[0];
   const caption = photo.description?.trim();
-  if (caption) return caption;
-  if (tags.includes('인물') && object) return `${place}에서 ${object}와 함께 선 모습이 남아 있다.`;
-  if (tags.includes('바다')) return `${place}의 물결이 발끝 가까이까지 밀려왔다.`;
-  if (tags.includes('산')) return `${place}의 능선이 하늘과 맞닿아 있었다.`;
+  if (caption) return caption.endsWith('.') || caption.endsWith('다') ? caption : `${caption}.`;
+  if (tags.includes('인물') && object) return `${place}에서 ${object}가 눈에 들어왔다.`;
+  if (tags.includes('바다')) return `${place}의 물결이 발끝까지 밀려왔다. 바람이 옷깃을 스쳤다.`;
+  if (tags.includes('산')) return `${place}의 능선이 눈에 들어왔다. 그늘 아래 잠시 머물렀다.`;
   if (tags.includes('꽃')) return `${place} 가장자리에 꽃이 한 줄로 피어 있었다.`;
-  if (tags.includes('건물')) return `${place}의 건물이 낮게 자리를 지키고 있었다.`;
-  if (tags.includes('길')) return `${place}로 이어진 길이 발밑에서 방향을 알려 주었다.`;
-  return `${place}의 장면이 사진 한 장에 남아 있다.`;
+  if (tags.includes('건물')) return `${place}의 건물이 낮게 자리를 지켰다.`;
+  if (tags.includes('길')) return `${place}로 이어진 길을 걸었다.`;
+  return `${place}의 장면이 눈에 들어왔다.`;
 }
 
 function photoSpotsFrom(photos: PhotoAnalysis[], place: string): string[] {
@@ -87,35 +93,35 @@ function fallbackAmenity(trip?: TripBlogContext): Pick<BlogRecommendations, 'res
   const blob = `${trip?.query || ''} ${trip?.title || ''} ${trip?.places.map((place) => place.name).join(' ') || ''}`;
   if (/제주/.test(blob)) {
     return {
-      parking: '성산·섭지코지 일대는 공영주차장과 임시 주차면을 함께 쓰는 곳이 많습니다. 성수기에는 조금 걸어 들어가는 편이 편합니다.',
-      carCamping: '해안 도로변 무단 차박은 단속되는 구간이 있습니다. 지정 야영장이나 허용 구역을 먼저 확인하는 것이 좋습니다.',
+      parking: '공영 자리에 차를 두고 조금 걸었다.',
+      carCamping: '해안 도로에서 하지 않았다.',
       restaurants: ['성산 해물뚝배기', '서귀포 갈치조림', '협재 해산물'],
     };
   }
   if (/부산|해운대|광안/.test(blob)) {
     return {
-      parking: '해수욕장 공영주차장은 주말에 빨리 찹니다. 조금 떨어진 주차장에 두고 걷는 편이 마음이 놓입니다.',
-      carCamping: '해안 도로와 모래밭 차박은 제한되는 곳이 많습니다. 허용 여부를 안내판으로 확인하세요.',
+      parking: '해변에서 한 블록 떨어진 자리에 두고 걸었다.',
+      carCamping: '모래밭에서 하지 않았다.',
       restaurants: ['자갈치 회', '밀면', '씨앗호떡'],
     };
   }
   if (/대구/.test(blob)) {
     return {
-      parking: '송해공원·수성못 주변은 공영주차장이 있습니다. 주말 낮에는 대기 시간이 생길 수 있습니다.',
-      carCamping: '공원 안 밤샘 주차는 제한되는 경우가 많습니다. 차박은 허용 구역만 이용하는 것이 안전합니다.',
+      parking: '공원 공영 자리에 차를 두었다.',
+      carCamping: '공원 안에서 하지 않았다.',
       restaurants: ['따로국밥', '막창', '수성못 근처 칼국수'],
     };
   }
   if (/강릉|경포|정동진/.test(blob)) {
     return {
-      parking: '경포·정동진 해수욕장 공영주차장을 쓰기 쉽습니다. 일출 시간에는 일찍 자리를 잡는 것이 좋습니다.',
-      carCamping: '해변 차박은 구간마다 다릅니다. 금지 안내가 있으면 바로 이동합니다.',
+      parking: '해수욕장 공영 자리에 두고 걸었다.',
+      carCamping: '안내가 없는 해변에서 하지 않았다.',
       restaurants: ['초당순두부', '고등어구이', '안목 커피거리 가벼운 식사'],
     };
   }
   return {
-    parking: '목적지 공영주차장 여부를 현지에서 한 번 더 확인하는 것이 좋습니다.',
-    carCamping: '차박은 구역마다 달라, 안내판을 보고 자리를 정하는 것이 안전합니다.',
+    parking: '목적지 앞에서 자리를 살핀 뒤 걸었다.',
+    carCamping: '안내판을 보고 나서야 자리를 정했다.',
     restaurants: ['현지 시장 식당', '국밥집', '해변 또는 공원 근처 백반'],
   };
 }
@@ -135,9 +141,9 @@ function buildRecommendations(photos: PhotoAnalysis[], trip?: TripBlogContext): 
 function formatPracticalNotes(rec: BlogRecommendations, parking: string): string {
   const restaurants = rec.restaurants.slice(0, 3);
   return [
-    `주차: ${parking}`,
-    `차박: ${rec.carCamping}`,
-    restaurants.length ? `맛집: ${restaurants.join(', ')}` : '',
+    `주차는 ${parking.replace(/^주차는\s*/, '')}`,
+    `차박은 ${rec.carCamping.replace(/^차박은\s*/, '')}`,
+    restaurants.length ? `맛집은 ${restaurants.join(', ')} 쪽으로 하루를 접었다.` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -180,9 +186,9 @@ function assembleDraft(input: {
   let closing = input.closing.trim();
   const notes = formatPracticalNotes(input.recommendations, input.parking || fallbackAmenity().parking);
   const extras = [
-    places ? `${places} 사이 풍경이 천천히 바뀐다.` : '발걸음을 재촉하지 않아도 장면은 남는다.',
-    '화장실과 벤치가 보이는 자리에서 숨을 고른 뒤, 다시 길이 이어진다.',
-    '해가 기울어도 속도는 그대로다. 오늘의 호흡이면 충분하다.',
+    places ? `${places} 사이 풍경이 천천히 바뀌었다.` : '발걸음을 재촉하지 않아도 장면은 남았다.',
+    '벤치가 보이는 자리에서 숨을 고른 뒤, 다시 길이 이어졌다.',
+    '해가 기울어도 속도는 그대로였다. 걸었던 하루면 충분했다.',
   ];
   const storyMax = Math.max(700, MAX_CHARS - notes.length - 2);
   const storyMin = Math.max(400, MIN_CHARS - notes.length - 2);
@@ -192,7 +198,7 @@ function assembleDraft(input: {
     const cut = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('다.') + 1);
     storyBody = (cut > 400 ? sliced.slice(0, cut + 1) : sliced).trim();
   }
-  const prose = clipProse(`${storyBody}\n\n${notes}`.trim());
+  const prose = clipProse(`${storyBody}\n\n${notes}`.trim().replace(/있습니다/g, '보였다').replace(/입니다/g, '였다'));
   const markdown = toMarkdownDraft({
     title: input.title,
     intro,
@@ -229,25 +235,26 @@ export function fallbackTravelBlog(
   const region = regionHint(analyzed, trip);
   const title = `${(trip?.title || trip?.query || mainPlace).trim()} 여행 후기`;
   const summary = `${mainPlace} 사진 ${analyzed.length || 0}장의 순서를 따라 적은 기록.`;
-  const intro = `${region || mainPlace}의 여행은 ${mainPlace}에서 첫 장면을 고른다. 서두르지 않아도 풍경은 제자리에 있다.`;
+  const intro = `${region || mainPlace}의 여행은 ${mainPlace}에서 첫 장면을 골랐다. 그 자리가 눈에 들어왔다.`;
   const walk = analyzed
     .map((photo, index) => {
       const name = photo.place || mainPlace;
-      const tags = (photo.visualTags ?? []).join('·') || photo.scene || '장면';
       const seen = sceneSentence(photo, name);
       if (index === 0) {
-        return `첫 장. ${name}. ${tags}이 먼저 눈에 들어왔다. ${seen}`;
+        return `${name}에서 하루가 열렸다. ${seen}`;
       }
-      return `${index + 1}번째 장. ${name}으로 이어진다. ${tags}. ${seen}`;
+      return `${name}으로 길이 이어졌다. ${seen}`;
     })
     .join('\n\n');
   const storyText =
     walk ||
     `${mainPlace}를 걸으며 눈에 담긴 것만 남겼다. 같은 문장을 반복하지 않기 위해, 사진이 가리킨 대상만 적는다.`;
-  const placesText = (trip?.places.length ? trip.places.map((place) => place.name) : placeNames)
-    .filter(Boolean)
-    .join(', ');
-  const closing = `${mainPlace}의 마지막 사진은 ${analyzed.at(-1)?.visualTags?.[0] || analyzed.at(-1)?.objects?.[0] || '하늘'}에서 끝난다. 순서를 바꾸지 않았다.`;
+  const named = (trip?.places.length ? trip.places.map((place) => place.name) : placeNames).filter(Boolean);
+  const placesText =
+    named.length > 1
+      ? `${named[0]}에서 ${named.at(-1)}까지 이름이 스쳤고, 걸음은 사진 순서를 따랐다.`
+      : named[0] || mainPlace;
+  const closing = `${mainPlace}의 마지막 사진은 ${analyzed.at(-1)?.visualTags?.[0] || analyzed.at(-1)?.objects?.[0] || '하늘'}에서 끝났다. 순서를 바꾸지 않은 채 머물렀다.`;
   const amenity = fallbackAmenity(trip);
   const rec = buildRecommendations(analyzed, trip);
   rec.restaurants = amenity.restaurants;
@@ -281,20 +288,22 @@ function buildPrompt(photos: PhotoAnalysis[], story: TravelStory, trip?: TripBlo
       visualTags: photo.visualTags ?? [],
     }))
   );
-  return `너는 한국어 여행 다큐멘터리 나레이터다. 유튜브 여행 에세이처럼 쓴다.
-존댓말 일기("~했습니다") 나열을 쓰지 마라. "성산일출봉에 갔습니다" 같은 문장 금지.
-과장 광고, 해시태그, SEO, 핫플/인생샷/강추 표현을 쓰지 마라.
+  return `너는 한국어 여행 다큐멘터리 나레이터다. 유튜브에 녹음하는 여행 영상 나레이션처럼 쓴다.
+존댓말 일기("~했습니다")를 쓰지 마라.
+금지 표현: 방문했습니다, 좋았습니다, 추천합니다, 유명합니다, 있습니다, 관광지입니다, 아름다운 관광지.
+해시태그, SEO, 광고, 핫플/인생샷/강추 금지.
+관광지 안내문처럼 쓰지 마라.
 
 필수 규칙:
-- 현재형·서술형 나레이션. 예: "제주의 아침은 성산일출봉에서 시작된다."
-- 사진 배열 순서가 곧 여행 동선이다. story는 사진1→사진2 순으로 장면이 바뀐다.
-- 선택한 관광지 이름을 본문에 실제로 넣되, 목록처럼 나열하지 마라.
-- 각 사진의 caption, objects, visualTags, scene을 해당 문단에 반영한다. 없는 풍경을 지어내지 마라.
-- 본문(intro+story+places+closing)은 1000~1500자.
-- 풍경 묘사와 감정을 적당히 넣는다. 마지막은 총평으로 마무리한다.
-- 주차, 차박 가능 여부, 맛집 2~3곳을 총평 근처에 자연스럽게 넣는다.
+- 과거형 나레이션. 아래 동사를 자연스럽게 섞어 쓴다: 보였다, 스쳤다, 걸었다, 머물렀다, 이어졌다, 눈에 들어왔다.
+- 예: "수목원 길은 생각보다 길었다. 나무 사이로 들어온 바람이 천천히 등을 밀어주었다."
+- 사진 배열 순서가 곧 이야기 순서다. story는 사진1→사진2 순으로 장면이 바뀐다.
+- 선택한 관광지 이름과 사진 분석(풍경, 장소 특징, 날씨, 시간대, 분위기, 색감, 사람 유무)을 함께 쓴다. 없는 풍경을 지어내지 마라.
+- 각 사진의 caption, objects, visualTags, scene, mood를 해당 문단에 반영한다.
+- 본문(intro+story+places+closing)은 1200~1800자.
 - 같은 문장 반복 금지. 금지 문장: ${BANNED_PHRASES.join(' / ')}
 - 이모지 금지.
+- 주차, 차박, 맛집 2~3곳은 존댓말 안내문이 아니라 여행자가 겪은 한 줄로 적는다. 예: "주차는 공영 자리에 차를 두고 조금 걸었다."
 
 여행 제목: ${trip?.title || story.summary || photos[0]?.place || '여행'}
 검색어/지역: ${trip?.query || ''}

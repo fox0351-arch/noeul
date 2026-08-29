@@ -101,10 +101,10 @@ const olleHasOrder = olleBlog.body.includes('성산일출봉이') && olleBlog.bo
 const songhaeHasOrder = songhaeBlog.body.includes('송해 선생님 동상') && songhaeBlog.body.includes('송해공원이라');
 const diaryBanned = /했습니다|에 갔습니다|오늘 고른 곳은/.test(olleBlog.body) || /했습니다|에 갔습니다|오늘 고른 곳은/.test(songhaeBlog.body);
 const lengthOk =
-  olleBlog.body.length >= 1000 &&
-  olleBlog.body.length <= 1500 &&
-  songhaeBlog.body.length >= 1000 &&
-  songhaeBlog.body.length <= 1500;
+  olleBlog.body.length >= 1200 &&
+  olleBlog.body.length <= 1800 &&
+  songhaeBlog.body.length >= 1200 &&
+  songhaeBlog.body.length <= 1800;
 const amenitiesOk =
   /주차/.test(olleBlog.body) &&
   /차박/.test(olleBlog.body) &&
@@ -140,5 +140,5 @@ if (bannedHits.length) throw new Error(`banned phrases: ${bannedHits.join(', ')}
 if (!olleHasJeju || !songhaeHasDaegu) throw new Error('place features missing');
 if (!olleHasOrder || !songhaeHasOrder) throw new Error('photo order missing');
 if (diaryBanned) throw new Error('diary/AI list pattern found');
-if (!lengthOk) throw new Error('review length must be 1000-1500');
+if (!lengthOk) throw new Error('review length must be 1200-1800');
 if (!amenitiesOk) throw new Error('parking/camping/restaurants missing');

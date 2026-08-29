@@ -28,6 +28,18 @@ export type OrderedPhotoFact = {
   visualTags: string[];
 };
 
+function moodFromAnalysis(caption: string, keywords: string[], tags: string[]): string {
+  const hay = `${caption} ${keywords.join(' ')} ${tags.join(' ')}`;
+  const parts: string[] = [];
+  if (/비|흐림|구름|rain|cloud/i.test(hay)) parts.push('흐린 날');
+  if (/맑|햇살|푸른|맑은/.test(hay)) parts.push('맑은 빛');
+  if (/노을|석양|일몰|저녁/.test(hay)) parts.push('해 질 녘');
+  if (/일출|새벽|아침/.test(hay)) parts.push('이른 아침');
+  if (/인물|사람|부부|사람있음/.test(hay)) parts.push('사람 있음');
+  if (/사람없음/.test(hay)) parts.push('사람 없음');
+  return parts.slice(0, 3).join(' · ');
+}
+
 export function photoFactsFromPlaces(places: PlaceItem[]): OrderedPhotoFact[] {
   const facts: OrderedPhotoFact[] = [];
   let order = 0;
@@ -35,18 +47,21 @@ export function photoFactsFromPlaces(places: PlaceItem[]): OrderedPhotoFact[] {
     for (const photo of place.photos ?? []) {
       order += 1;
       const analysis = photo.analysis;
+      const keywords = analysis?.keywords ?? [];
+      const visualTags = analysisVisualTags(analysis);
+      const caption = analysis?.caption || '';
       facts.push({
         order,
         fileName: `사진${order}`,
         place: place.name,
         address: place.address,
         scene: analysis?.scene || 'other',
-        caption: analysis?.caption || '',
+        caption,
         objects: analysis?.subjects ?? [],
-        mood: '',
-        keywords: analysis?.keywords ?? [],
+        mood: moodFromAnalysis(caption, keywords, visualTags),
+        keywords,
         landmark: analysis?.landmark || '',
-        visualTags: analysisVisualTags(analysis),
+        visualTags,
       });
     }
   }
@@ -81,6 +96,7 @@ export function compactPhotoFacts(facts: OrderedPhotoFact[]) {
     caption: fact.caption.slice(0, 280),
     objects: fact.objects.slice(0, 8),
     keywords: fact.keywords.slice(0, 8),
+    mood: fact.mood.slice(0, 40),
     landmark: fact.landmark.slice(0, 40),
     visualTags: fact.visualTags,
   }));

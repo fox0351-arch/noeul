@@ -59,13 +59,25 @@ export function normalizeAnalysis(value: unknown): PhotoAiAnalysis | null {
     confidence?: unknown;
     landmark?: unknown;
     visualTags?: unknown;
+    mood?: unknown;
+    weather?: unknown;
+    timeOfDay?: unknown;
+    colorTone?: unknown;
+    peopleCount?: unknown;
   };
   const caption = cleanCaption(record.caption);
   if (!caption) return null;
   const subjects = Array.isArray(record.subjects)
     ? record.subjects.filter((item): item is string => typeof item === 'string').slice(0, 6)
     : [];
-  const keywords = asKeywords(record.keywords);
+  const extras = [record.mood, record.weather, record.timeOfDay, record.colorTone]
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim().slice(0, 20))
+    .filter(Boolean);
+  if (typeof record.peopleCount === 'number') {
+    extras.push(record.peopleCount > 0 ? '사람있음' : '사람없음');
+  }
+  const keywords = Array.from(new Set([...asKeywords(record.keywords), ...extras])).slice(0, 8);
   const landmark = typeof record.landmark === 'string' ? record.landmark.trim().slice(0, 40) : '';
   const visualTags = classifyVisualTags({
     scene: asScene(record.scene),
@@ -158,17 +170,21 @@ async function analyzeWithGemini(
   placeMemo: string | undefined,
   notes: string[]
 ): Promise<{ analysis: PhotoAiAnalysis | null; raw: unknown }> {
-  const prompt = `너는 여행 사진 분석기다. 사진에서 보이는 것을 추정해 JSON만 출력하라.
+  const prompt = `너는 여행 사진 분석기다. 사진에서 보이는 것만 추정해 JSON만 출력하라.
 광고, 추천, 과장 문구 금지.
-caption은 한국어 한 문장, 과거형 나레이션. 이 사진에만 있는 구체적인 대상(색, 물체, 사람, 날씨)을 넣는다.
+caption은 한국어 한 문장, 과거형 나레이션. 이 사진에만 있는 풍경·장소 특징·날씨·시간대·분위기·색감·사람 유무를 구체적으로 넣는다.
+예: "나무 사이로 푸른 빛이 들어왔고, 흐린 바람이 등을 스쳤다."
 scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
 visualTags는 해당하는 것만: 풍경, 인물, 바다, 산, 꽃, 건물, 길.
-peopleCount는 보이는 사람 수(숫자).
-mood는 짧은 분위기 설명.
-blogKeywords는 블로그용 한국어 키워드.
+peopleCount는 보이는 사람 수(숫자). 없으면 0.
+weather는 맑음/흐림/비/눈 중 보이는 것만.
+timeOfDay는 새벽/아침/낮/오후/해질녘/밤 중 보이는 것만.
+colorTone은 짧은 색감(예: 푸른빛, 노란 모래).
+mood는 짧은 분위기.
+keywords에 weather, timeOfDay, colorTone, 사람있음/사람없음을 함께 넣는다.
 장소 힌트: ${placeName}
 메모 힌트: ${placeMemo || '없음'}
-형식: {"scene":"place","caption":"...","subjects":["태극기"],"keywords":["국회의사당"],"confidence":0.7,"landmark":"국회의사당","visualTags":["건물","인물"],"placeName":"국회의사당","peopleCount":2,"mood":"여행","estimatedLocation":"서울 여의도","objects":["국회의사당"],"tags":["#국회의사당"],"blogKeywords":["국회의사당"]}`;
+형식: {"scene":"place","caption":"...","subjects":["태극기"],"keywords":["흐림","오후","푸른빛","사람없음"],"confidence":0.7,"landmark":"국회의사당","visualTags":["건물","인물"],"placeName":"국회의사당","peopleCount":2,"mood":"차분함","weather":"맑음","timeOfDay":"오후","colorTone":"흰 돌","estimatedLocation":"서울 여의도","objects":["국회의사당"],"tags":["#국회의사당"],"blogKeywords":["국회의사당"]}`;
 
   const models = await listGeminiModels(apiKey, notes);
   const versions = ['v1beta', 'v1'] as const;
