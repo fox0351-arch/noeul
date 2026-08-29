@@ -27,8 +27,9 @@ body {
 
 .place-field {
   color: #111111;
-  min-height: 48px;
-  font-size: 16px;
+  min-height: 64px;
+  height: 64px;
+  font-size: 20px;
 }
 
 .place-field::placeholder {
@@ -38,6 +39,26 @@ body {
 
 .map-pane {
   min-height: 42vh;
+}
+
+.noeul-fit-bounds {
+  position: absolute;
+  z-index: 20;
+  top: 12px;
+  left: 12px;
+  min-height: 56px;
+  padding: 0 16px;
+  border: 2px solid #d97706;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #9a3412;
+  font-size: 18px;
+  font-weight: 800;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
+}
+
+.noeul-fit-bounds:disabled {
+  opacity: 0.45;
 }
 
 .workspace {
@@ -61,8 +82,9 @@ body {
 
 @media (min-width: 768px) {
   .place-field {
-    min-height: 48px;
-    font-size: 16px;
+    min-height: 64px;
+    height: 64px;
+    font-size: 20px;
   }
 
   .map-pane {
@@ -144,33 +166,34 @@ button.status-chip {
 
 @media (max-width: 767px) {
   .workspace {
-    display: grid;
-    grid-template-rows: auto minmax(120px, 1fr) auto minmax(220px, 36vh);
-    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .workspace-search {
-    grid-row: 1;
+    flex: 0 0 auto;
   }
 
   .workspace-places {
-    grid-row: 2;
+    flex: 0 0 auto;
     min-height: 0;
-    overflow-y: auto;
+    overflow: visible;
   }
 
   .workspace-saved {
-    grid-row: 3;
-    max-height: 26vh;
+    flex: 0 0 auto;
+    max-height: none;
     min-height: 0;
-    overflow-y: auto;
+    overflow: visible;
   }
 
   .workspace-map,
   .map-pane {
-    grid-row: 4;
-    min-height: 220px;
-    height: 36vh;
+    flex: 0 0 auto;
+    min-height: 380px;
+    height: 42vh;
   }
 
   .hiking-mode .map-pane {

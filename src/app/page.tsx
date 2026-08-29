@@ -80,6 +80,9 @@ async function requestTravelReview(
 
 export default function HomePage() {
   const [keyword, setKeyword] = useState('');
+  const [addKeyword, setAddKeyword] = useState('');
+  const [isAdding, setIsAdding] = useState(false);
+  const [addErrorMsg, setAddErrorMsg] = useState('');
   const [currentQuery, setCurrentQuery] = useState('');
   const [places, setPlaces] = useState<PlaceItem[]>([]);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
@@ -329,6 +332,53 @@ export default function HomePage() {
     }
   };
 
+  const handleAddPlace = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const query = addKeyword.trim();
+    if (!query) return;
+    setIsAdding(true);
+    setAddErrorMsg('');
+    setErrorMsg('');
+    try {
+      const res = await fetch('/api/places', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, intent: 'add' }),
+      });
+      const data: PlacesSearchResponse & { error?: string } = await res.json();
+      if (!res.ok) throw new Error(data.error || '장소를 추가하지 못했습니다.');
+      const found = data.places[0];
+      if (!found) throw new Error('일치하는 장소를 찾지 못했습니다.');
+      if (places.some((place) => place.id === found.id)) {
+        throw new Error('이미 목록에 있는 장소입니다.');
+      }
+      const nextPlace: PlaceItem = { ...found, addedManually: true };
+      const nextPlaces = [...places, nextPlace];
+      const nextChecked = [...checkedIds, nextPlace.id];
+      const nextCenter = nextPlace.location;
+      setPlaces(nextPlaces);
+      setCheckedIds(nextChecked);
+      setSelectedPlaceId(nextPlace.id);
+      setAddKeyword('');
+      const manager = MapManager.getInstance();
+      manager.setTravelMode(true);
+      manager.setPlaces(nextPlaces);
+      if (nextPlaces.length >= 2) manager.fitPlacesBounds(nextPlaces);
+      else manager.setMapCenter(nextCenter.latitude, nextCenter.longitude, 14);
+      persistTrip(nextPlaces, nextChecked, tripPhotos);
+      setMapNotice(`'${nextPlace.name}'을 목록에 넣었습니다.`);
+    } catch (err: unknown) {
+      setAddErrorMsg(err instanceof Error ? err.message : '장소 추가 도중 오류가 발생했습니다.');
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
+  const handleFitMap = () => {
+    if (places.length === 0) return;
+    MapManager.getInstance().fitPlacesBounds(places);
+  };
+
   const handleTogglePlace = (placeId: string) => {
     const next = checkedIds.includes(placeId)
       ? checkedIds.filter((id) => id !== placeId)
@@ -507,26 +557,48 @@ export default function HomePage() {
       )}
 
       <div className="flex-1 min-h-0 workspace">
-        <form onSubmit={handleSearch} className="p-4 border-b shrink-0 workspace-search border-slate-100">
-          <label className="block mb-2 text-lg font-bold text-slate-800">1. 어디로 가세요?</label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              placeholder="제주도, 부산, 강릉"
-              className="place-field flex-1 min-w-0 px-4 py-3 text-lg border rounded-xl outline-none border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
-            />
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="px-5 text-lg font-bold text-white rounded-xl shrink-0 min-h-14 min-w-24 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
-            >
-              {isLoading ? '찾는 중' : '검색'}
-            </button>
-          </div>
-          {errorMsg && <p className="mt-2 text-base font-semibold text-red-600">{errorMsg}</p>}
-        </form>
+        <div className="border-b shrink-0 workspace-search border-slate-100">
+          <form onSubmit={handleSearch} className="px-4 pt-4">
+            <label className="block mb-2 text-lg font-bold text-slate-800">1. 어디로 가세요?</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+                placeholder="제주도, 부산, 강릉"
+                className="place-field flex-1 min-w-0 px-4 text-xl border rounded-xl outline-none border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+              />
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="px-5 text-xl font-bold text-white rounded-xl shrink-0 h-16 min-h-16 min-w-24 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
+              >
+                {isLoading ? '찾는 중' : '검색'}
+              </button>
+            </div>
+            {errorMsg && <p className="mt-2 text-base font-semibold text-red-600">{errorMsg}</p>}
+          </form>
+          <form onSubmit={handleAddPlace} className="px-4 pt-3 pb-4">
+            <label className="block mb-2 text-lg font-bold text-slate-800">장소 직접 추가</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={addKeyword}
+                onChange={(e) => setAddKeyword(e.target.value)}
+                placeholder="예: 광안리해수욕장"
+                className="place-field flex-1 min-w-0 px-4 text-xl border rounded-xl outline-none border-slate-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+              />
+              <button
+                type="submit"
+                disabled={isAdding}
+                className="px-5 text-xl font-bold text-white rounded-xl shrink-0 h-16 min-h-16 min-w-24 bg-orange-500 hover:bg-orange-600 disabled:bg-slate-300"
+              >
+                {isAdding ? '추가 중' : '추가'}
+              </button>
+            </div>
+            {addErrorMsg && <p className="mt-2 text-base font-semibold text-red-600">{addErrorMsg}</p>}
+          </form>
+        </div>
 
         <div className="p-4 workspace-places md:min-h-0 md:overflow-y-auto">
           <div className="flex items-center justify-between gap-2 mb-3">
@@ -551,29 +623,29 @@ export default function HomePage() {
           {places.length === 0 ? (
             <p className="py-8 text-lg text-center text-slate-400">지역 이름을 검색하면 관광지가 나옵니다.</p>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {places.map((place, idx) => {
                 const checked = checkedIds.includes(place.id);
                 return (
                   <div
                     key={place.id}
-                    className={`flex items-center gap-3 p-3 rounded-xl border ${
+                    className={`flex items-center gap-4 px-4 py-4 min-h-[76px] rounded-2xl border ${
                       checked ? 'border-amber-500 bg-amber-50' : 'border-slate-200 bg-white'
-                    }`}
+                    } ${place.addedManually ? 'border-orange-400' : ''}`}
                   >
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={() => handleTogglePlace(place.id)}
-                      className="w-8 h-8 accent-amber-600 shrink-0"
+                      className="w-10 h-10 accent-amber-600 shrink-0"
                       aria-label={`${place.name} 선택`}
                     />
                     <button
                       type="button"
                       onClick={() => openPlaceDetail(place)}
-                      className="flex-1 min-w-0 text-left"
+                      className="flex-1 min-w-0 py-2 text-left"
                     >
-                      <span className="text-lg font-bold text-slate-900">
+                      <span className={`text-xl font-black leading-snug ${place.addedManually ? 'text-orange-700' : 'text-slate-900'}`}>
                         {idx + 1}. {place.name}
                       </span>
                     </button>
@@ -624,7 +696,7 @@ export default function HomePage() {
             type="button"
             onClick={handleGenerateReview}
             disabled={isReviewGenerating}
-            className="w-full mb-3 text-xl font-black text-white rounded-xl min-h-14 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
+            className="w-full mb-3 text-2xl font-black text-white rounded-2xl min-h-[76px] h-[76px] bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
           >
             {isReviewGenerating ? '후기 작성 중...' : '여행 후기 생성'}
           </button>
@@ -678,6 +750,14 @@ export default function HomePage() {
             onOpenPlaceDetail={handleOpenPlaceDetail}
             travelMode
           />
+          <button
+            type="button"
+            onClick={handleFitMap}
+            disabled={places.length === 0}
+            className="noeul-fit-bounds"
+          >
+            지도 전체 보기
+          </button>
         </div>
       </div>
 

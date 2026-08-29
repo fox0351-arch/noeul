@@ -149,6 +149,7 @@ export class MapManager {
   private rotationLogs: readonly RotationCameraLog[] = [];
   private rotationLogListeners = new Set<() => void>();
   private fitBoundsCount = 0;
+  private skipSelectPanUntil = 0;
   private fabRoot: HTMLDivElement | null = null;
   private locateBtn: HTMLButtonElement | null = null;
   private locateBadge: HTMLSpanElement | null = null;
@@ -468,6 +469,7 @@ export class MapManager {
     const place = this.places.find((item) => item.id === id);
     if (!place) return;
     if (this.travelMode) {
+      if (Date.now() < this.skipSelectPanUntil) return;
       this.setMapCenter(place.location.latitude, place.location.longitude, 15);
       return;
     }
@@ -537,6 +539,7 @@ export class MapManager {
     }
     map.setHeading?.(0);
     map.setTilt?.(0);
+    this.skipSelectPanUntil = Date.now() + 2000;
     map.fitBounds(bounds, 72);
     this.fitBoundsCount += 1;
   }
