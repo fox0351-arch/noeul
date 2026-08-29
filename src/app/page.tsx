@@ -379,6 +379,17 @@ export default function HomePage() {
     MapManager.getInstance().fitPlacesBounds(places);
   };
 
+  const handleMovePlace = (index: number, offset: -1 | 1) => {
+    const target = index + offset;
+    if (target < 0 || target >= places.length) return;
+    const nextPlaces = [...places];
+    const [moved] = nextPlaces.splice(index, 1);
+    nextPlaces.splice(target, 0, moved);
+    setPlaces(nextPlaces);
+    persistTrip(nextPlaces, checkedIds, tripPhotos);
+    MapManager.getInstance().setPlaces(nextPlaces);
+  };
+
   const handleTogglePlace = (placeId: string) => {
     const next = checkedIds.includes(placeId)
       ? checkedIds.filter((id) => id !== placeId)
@@ -633,6 +644,26 @@ export default function HomePage() {
                       checked ? 'border-amber-500 bg-amber-50' : 'border-slate-200 bg-white'
                     } ${place.addedManually ? 'border-orange-400' : ''}`}
                   >
+                    <div className="flex flex-col gap-0.5 shrink-0">
+                      <button
+                        type="button"
+                        aria-label={`${place.name} 한 칸 위로`}
+                        disabled={idx === 0}
+                        onClick={() => handleMovePlace(idx, -1)}
+                        className="flex items-center justify-center text-sm font-bold rounded w-9 h-9 md:w-7 md:h-7 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+                      >
+                        ▲
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`${place.name} 한 칸 아래로`}
+                        disabled={idx === places.length - 1}
+                        onClick={() => handleMovePlace(idx, 1)}
+                        className="flex items-center justify-center text-sm font-bold rounded w-9 h-9 md:w-7 md:h-7 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+                      >
+                        ▼
+                      </button>
+                    </div>
                     <input
                       type="checkbox"
                       checked={checked}
