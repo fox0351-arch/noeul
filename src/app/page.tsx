@@ -247,11 +247,13 @@ export default function HomePage() {
       if (!res.ok) throw new Error(data.error || '장소를 검색할 수 없습니다.');
 
       const nextPlaces = clonePlaces(data.places);
-      const nextCenter = nextPlaces[0]?.location ?? data.center;
+      const nextCenter = data.center ?? nextPlaces[0]?.location;
       const manager = MapManager.getInstance();
       manager.setTravelMode(true);
       manager.setPlaces(nextPlaces);
-      if (nextCenter) {
+      if (nextPlaces.length >= 2) {
+        manager.fitPlacesBounds(nextPlaces);
+      } else if (nextCenter) {
         manager.setMapCenter(nextCenter.latitude, nextCenter.longitude, 14);
       }
       const logSearch = (when: string) => {
@@ -273,7 +275,7 @@ export default function HomePage() {
       window.setTimeout(() => logSearch('after-setCenter'), 400);
       clearTransientTripState();
       setPlaces(nextPlaces);
-      setCenter(nextCenter);
+      if (nextCenter) setCenter(nextCenter);
       setCurrentQuery(data.query);
       setMapTitle(data.query);
       setLoadedMapId(null);
@@ -306,7 +308,7 @@ export default function HomePage() {
       const res = await fetch('/api/places', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, intent: 'add' }),
       });
       const data: PlacesSearchResponse & { error?: string } = await res.json();
       if (!res.ok) throw new Error(data.error || '장소를 추가할 수 없습니다.');
