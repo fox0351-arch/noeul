@@ -1,6 +1,7 @@
 import { setOptions, importLibrary } from '@googlemaps/js-api-loader';
 import { destinationPoint } from '@/lib/geo';
 import { PlaceItem, PlaceLocation } from '@/types/place';
+import { campingShort, parkingShort, placeAmenity } from '@/lib/placeAmenity';
 import { useLocationStore, type FollowCameraDebug } from '@/store/useLocationStore';
 
 const WALK_ZOOM = 18;
@@ -124,6 +125,8 @@ export class MapManager {
   private returnHalo: google.maps.Circle | null = null;
   private returnPulseTimer: number | null = null;
   private onSelectPlace: ((id: string) => void) | null = null;
+  private onOpenPlaceDetail: ((id: string) => void) | null = null;
+  private infoWindow: google.maps.InfoWindow | null = null;
   private places: PlaceItem[] = [];
   private routePoints: PlaceLocation[] = [];
   private selectedPlaceId: string | null = null;
@@ -263,6 +266,8 @@ export class MapManager {
     this.unsubscribeStore?.();
     this.unsubscribeStore = null;
     this.clearReturnGraphics();
+    this.infoWindow?.close();
+    this.infoWindow = null;
     this.placeMarkers.forEach((marker) => marker.setMap(null));
     this.placeMarkers = [];
     this.routeLine?.setMap(null);
@@ -277,6 +282,47 @@ export class MapManager {
 
   setOnSelectPlace(handler: (id: string) => void): void {
     this.onSelectPlace = handler;
+  }
+
+  setOnOpenPlaceDetail(handler: (id: string) => void): void {
+    this.onOpenPlaceDetail = handler;
+  }
+
+  private openPlaceInfo(place: PlaceItem, marker: google.maps.Marker): void {
+    const map = this.map;
+    if (!map || !window.google) return;
+    const amenity = placeAmenity(place);
+    const wrap = document.createElement('div');
+    wrap.className = 'noeul-info';
+    const title = document.createElement('p');
+    title.className = 'noeul-info-title';
+    title.textContent = place.name;
+    const line = document.createElement('p');
+    line.className = 'noeul-info-line';
+    line.textContent = amenity.oneLiner;
+    const meta = document.createElement('p');
+    meta.className = 'noeul-info-meta';
+    meta.textContent = `${parkingShort(amenity.parking)} · ${campingShort(amenity.carCamping)}`;
+    const detailBtn = document.createElement('button');
+    detailBtn.type = 'button';
+    detailBtn.className = 'noeul-info-btn';
+    detailBtn.textContent = '상세보기';
+    detailBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.onOpenPlaceDetail?.(place.id);
+    });
+    wrap.append(title, line, meta, detailBtn);
+    this.infoWindow?.close();
+    this.infoWindow = new google.maps.InfoWindow({ content: wrap, maxWidth: 280 });
+    this.infoWindow.open({ map, anchor: marker });
+    window.google.maps.event.addListenerOnce(this.infoWindow, 'domready', () => {
+      detailBtn.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.onOpenPlaceDetail?.(place.id);
+      };
+    });
   }
 
   setMapFabs(opts: {
@@ -377,6 +423,7 @@ export class MapManager {
     const map = this.map;
     if (!map || !window.google) return;
 
+    this.infoWindow?.close();
     this.placeMarkers.forEach((marker) => marker.setMap(null));
     this.placeMarkers = places.map((place, index) => {
       const marker = new google.maps.Marker({
@@ -396,9 +443,22 @@ export class MapManager {
           labelOrigin: new google.maps.Point(16, 10),
         },
       });
-      marker.addListener('click', () => this.onSelectPlace?.(place.id));
+      marker.addListener('click', () => {
+        this.openPlaceInfo(place, marker);
+        this.onSelectPlace?.(place.id);
+      });
       return marker;
     });
+  }
+
+  clickPlaceMarker(id: string): boolean {
+    const index = this.places.findIndex((place) => place.id === id);
+    const place = this.places[index];
+    const marker = this.placeMarkers[index];
+    if (!place || !marker) return false;
+    this.openPlaceInfo(place, marker);
+    this.onSelectPlace?.(place.id);
+    return true;
   }
 
   setSelectedPlace(id: string | null): void {

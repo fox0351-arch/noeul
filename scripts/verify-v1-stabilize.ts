@@ -97,8 +97,9 @@ const banned = ['우리는 서두르지 않았다', '천천히 걸어도 괜찮�
 const bannedHits = banned.filter((phrase) => olleBlog.body.includes(phrase) || songhaeBlog.body.includes(phrase));
 const olleHasJeju = /제주|올레|성산|광치기|유채|현무암/.test(olleBlog.body);
 const songhaeHasDaegu = /대구|송해|낙동강|동상|은행/.test(songhaeBlog.body);
-const olleHasOrder = olleBlog.body.includes('1번째 사진') && olleBlog.body.includes('10번째 사진');
-const songhaeHasOrder = songhaeBlog.body.includes('1번째 사진') && songhaeBlog.body.includes('10번째 사진');
+const olleHasOrder = olleBlog.body.includes('성산일출봉이') && olleBlog.body.includes('수평선이');
+const songhaeHasOrder = songhaeBlog.body.includes('송해 선생님 동상') && songhaeBlog.body.includes('송해공원이라');
+const diaryBanned = /했습니다|에 갔습니다|오늘 고른 곳은/.test(olleBlog.body) || /했습니다|에 갔습니다|오늘 고른 곳은/.test(songhaeBlog.body);
 const lengthOk =
   olleBlog.body.length >= 1000 &&
   olleBlog.body.length <= 1500 &&
@@ -121,6 +122,7 @@ const report = {
   songhaeHasDaegu,
   olleHasOrder,
   songhaeHasOrder,
+  diaryBanned,
   lengthOk,
   amenitiesOk,
   olleChars: olleBlog.body.length,
@@ -137,5 +139,6 @@ if (similarity > 0.5) throw new Error(`blog similarity too high: ${similarity}`)
 if (bannedHits.length) throw new Error(`banned phrases: ${bannedHits.join(', ')}`);
 if (!olleHasJeju || !songhaeHasDaegu) throw new Error('place features missing');
 if (!olleHasOrder || !songhaeHasOrder) throw new Error('photo order missing');
+if (diaryBanned) throw new Error('diary/AI list pattern found');
 if (!lengthOk) throw new Error('review length must be 1000-1500');
 if (!amenitiesOk) throw new Error('parking/camping/restaurants missing');

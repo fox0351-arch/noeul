@@ -1,12 +1,14 @@
 'use client';
 
 import { PlaceDetails, PlaceItem } from '@/types/place';
+import { campingShort, parkingShort, placeAmenity } from '@/lib/placeAmenity';
 
 interface PlaceDetailCardProps {
   place: PlaceItem;
   details: PlaceDetails | null;
   isLoading: boolean;
   error: string;
+  query?: string;
   onClose: () => void;
 }
 
@@ -15,119 +17,103 @@ export default function PlaceDetailCard({
   details,
   isLoading,
   error,
+  query,
   onClose,
 }: PlaceDetailCardProps) {
+  const amenity = placeAmenity(place, query);
   const name = details?.name || place.name;
   const address = details?.address || place.address;
-  const rating = details?.rating ?? place.rating;
+  const intro = details?.description || details?.blogSummary || amenity.intro;
+  const hours = details?.openingHours?.length ? details.openingHours : [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center md:items-center md:p-6">
-      <button
-        type="button"
-        aria-label="상세 닫기"
-        onClick={onClose}
-        className="absolute inset-0 bg-slate-900/40"
-      />
-      <article className="relative z-10 flex flex-col w-full max-h-[88vh] overflow-hidden bg-white shadow-sm md:max-w-[440px] md:rounded-2xl rounded-t-2xl">
-        <div className="relative shrink-0 bg-slate-100 aspect-[16/10] max-h-52">
-          {details?.photoUrl ? (
-            <img src={details.photoUrl} alt={name} className="object-cover w-full h-full" />
-          ) : (
-            <div className="flex items-center justify-center w-full h-full text-sm text-slate-400">
-              {isLoading ? '사진을 불러오는 중...' : '대표 사진 없음'}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute flex items-center justify-center text-lg font-bold bg-white rounded-full top-3 right-3 w-11 h-11 text-slate-700"
-            aria-label="닫기"
-          >
-            ×
-          </button>
-        </div>
+    <div className="fixed inset-0 z-[70] flex flex-col bg-white">
+      <header className="flex items-center gap-2 px-3 py-3 border-b shrink-0 border-slate-200">
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex items-center justify-center text-2xl font-black rounded-xl shrink-0 w-14 h-14 bg-slate-100 text-slate-800"
+          aria-label="뒤로가기"
+        >
+          ←
+        </button>
+        <h2 className="flex-1 min-w-0 text-xl font-black leading-snug text-slate-900">{name}</h2>
+      </header>
 
-        <div className="flex-1 min-h-0 px-4 py-4 overflow-y-auto md:px-5">
-          <h2 className="text-xl font-bold leading-snug text-slate-900">{name}</h2>
-          <p className="mt-1 text-sm text-slate-500">{address}</p>
-          <p className="mt-2 text-base font-semibold text-amber-500">
-            ★ {rating ?? '평점 없음'}
-            {details?.userRatingCount ? (
-              <span className="ml-1 text-xs font-normal text-slate-400">({details.userRatingCount})</span>
-            ) : null}
-          </p>
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {details?.photoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={details.photoUrl} alt={name} className="object-cover w-full h-48 bg-slate-100" />
+        ) : (
+          <div className="flex items-center justify-center h-28 text-lg text-slate-400 bg-slate-100">
+            {isLoading ? '사진을 불러오는 중...' : '대표 사진 없음'}
+          </div>
+        )}
 
-          {isLoading && <p className="mt-4 text-sm text-slate-400">상세 정보를 불러오는 중...</p>}
-          {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
+        <div className="px-5 py-5 space-y-6">
+          {isLoading && <p className="text-lg text-slate-500">상세 정보를 불러오는 중...</p>}
+          {error && <p className="text-lg font-semibold text-red-600">{error}</p>}
 
-          {details?.blogSummary && (
-            <section className="pt-4 mt-4 border-t border-slate-100">
-              <h3 className="mb-2 text-sm font-bold text-slate-800">한눈에 보기</h3>
-              <p className="text-[15px] leading-7 text-slate-700">{details.blogSummary}</p>
-            </section>
-          )}
+          <section>
+            <h3 className="mb-2 text-xl font-black text-slate-800">관광지 소개</h3>
+            <p className="text-lg leading-8 text-slate-700">{intro}</p>
+          </section>
 
-          {details?.description && (
-            <section className="mt-4">
-              <h3 className="mb-2 text-sm font-bold text-slate-800">장소 설명</h3>
-              <p className="text-sm leading-6 text-slate-600">{details.description}</p>
-            </section>
-          )}
+          <section>
+            <h3 className="mb-2 text-xl font-black text-slate-800">주소</h3>
+            <p className="text-lg leading-8 text-slate-700">{address || '주소 정보 없음'}</p>
+          </section>
 
-          {details && details.openingHours.length > 0 && (
-            <section className="mt-4">
-              <h3 className="mb-2 text-sm font-bold text-slate-800">운영시간</h3>
-              <ul className="space-y-1 text-sm text-slate-600">
-                {details.openingHours.map((line) => (
+          <section>
+            <h3 className="mb-2 text-xl font-black text-slate-800">운영시간</h3>
+            {hours.length > 0 ? (
+              <ul className="space-y-1 text-lg leading-8 text-slate-700">
+                {hours.map((line) => (
                   <li key={line}>{line}</li>
                 ))}
               </ul>
-            </section>
-          )}
+            ) : (
+              <p className="text-lg leading-8 text-slate-700">운영시간은 현지 안내를 확인해 주세요.</p>
+            )}
+          </section>
 
-          {(details?.phone || details?.website) && (
-            <section className="mt-4">
-              <h3 className="mb-2 text-sm font-bold text-slate-800">연락처</h3>
-              {details.phone && (
-                <a href={`tel:${details.phone}`} className="block text-sm text-blue-600 min-h-11 leading-[44px]">
-                  전화 {details.phone}
-                </a>
-              )}
-              {details.website && (
-                <a
-                  href={details.website}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block text-sm text-blue-600 break-all min-h-11 leading-[44px]"
-                >
-                  홈페이지
-                </a>
-              )}
-            </section>
-          )}
+          <section>
+            <h3 className="mb-2 text-xl font-black text-slate-800">주차</h3>
+            <p className="text-lg font-bold text-amber-700">{parkingShort(amenity.parking)}</p>
+            <p className="mt-1 text-lg leading-8 text-slate-700">{amenity.parking}</p>
+          </section>
 
-          {details && details.reviews.length > 0 && (
-            <section className="mt-4 mb-2">
-              <h3 className="mb-2 text-sm font-bold text-slate-800">방문 후기</h3>
-              <div className="space-y-3">
-                {details.reviews.map((review, index) => (
-                  <div key={`${review.author}-${index}`} className="p-3 rounded-xl bg-slate-50">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-semibold text-slate-800">{review.author}</span>
-                      <span className="text-xs text-amber-500">★ {review.rating ?? '-'}</span>
-                    </div>
-                    {review.relativeTime && (
-                      <p className="mt-0.5 text-xs text-slate-400">{review.relativeTime}</p>
-                    )}
-                    <p className="mt-2 text-sm leading-6 text-slate-600">{review.text}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
+          <section>
+            <h3 className="mb-2 text-xl font-black text-slate-800">차박</h3>
+            <p className="text-lg font-bold text-amber-700">{campingShort(amenity.carCamping)}</p>
+            <p className="mt-1 text-lg leading-8 text-slate-700">{amenity.carCamping}</p>
+          </section>
+
+          <section>
+            <h3 className="mb-2 text-xl font-black text-slate-800">추천 방문 시간</h3>
+            <p className="text-lg leading-8 text-slate-700">{amenity.visitTime}</p>
+          </section>
+
+          <section className="pb-8">
+            <h3 className="mb-2 text-xl font-black text-slate-800">주변 맛집</h3>
+            <ul className="space-y-2 text-lg leading-8 text-slate-700">
+              {amenity.restaurants.slice(0, 3).map((item) => (
+                <li key={item}>· {item}</li>
+              ))}
+            </ul>
+          </section>
         </div>
-      </article>
+      </div>
+
+      <div className="p-4 border-t shrink-0 border-slate-200">
+        <button
+          type="button"
+          onClick={onClose}
+          className="w-full text-xl font-black text-white rounded-xl min-h-14 bg-amber-600"
+        >
+          닫기
+        </button>
+      </div>
     </div>
   );
 }

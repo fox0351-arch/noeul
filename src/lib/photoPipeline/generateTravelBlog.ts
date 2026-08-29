@@ -180,9 +180,9 @@ function assembleDraft(input: {
   let closing = input.closing.trim();
   const notes = formatPracticalNotes(input.recommendations, input.parking || fallbackAmenity().parking);
   const extras = [
-    places ? `${places} 사이를 천천히 오갔습니다.` : '발걸음을 재촉하지 않았습니다.',
-    '화장실과 벤치가 보이는 곳에서 잠시 쉬고, 다시 길을 이었습니다.',
-    '해가 기울어도 서두르지 않았습니다. 오늘의 속도면 충분했습니다.',
+    places ? `${places} 사이 풍경이 천천히 바뀐다.` : '발걸음을 재촉하지 않아도 장면은 남는다.',
+    '화장실과 벤치가 보이는 자리에서 숨을 고른 뒤, 다시 길이 이어진다.',
+    '해가 기울어도 속도는 그대로다. 오늘의 호흡이면 충분하다.',
   ];
   const storyMax = Math.max(700, MAX_CHARS - notes.length - 2);
   const storyMin = Math.max(400, MIN_CHARS - notes.length - 2);
@@ -229,7 +229,7 @@ export function fallbackTravelBlog(
   const region = regionHint(analyzed, trip);
   const title = `${(trip?.title || trip?.query || mainPlace).trim()} 여행 후기`;
   const summary = `${mainPlace} 사진 ${analyzed.length || 0}장의 순서를 따라 적은 기록.`;
-  const intro = `${region || mainPlace}으로 향했습니다. 서두르지 않고, 눈에 들어오는 것만 따라갔습니다.`;
+  const intro = `${region || mainPlace}의 여행은 ${mainPlace}에서 첫 장면을 고른다. 서두르지 않아도 풍경은 제자리에 있다.`;
   const walk = analyzed
     .map((photo, index) => {
       const name = photo.place || mainPlace;
@@ -281,18 +281,19 @@ function buildPrompt(photos: PhotoAnalysis[], story: TravelStory, trip?: TripBlo
       visualTags: photo.visualTags ?? [],
     }))
   );
-  return `너는 60대 여행자의 눈높이로 한국어 여행 후기를 쓴다.
-과장 광고, 해시태그, SEO 키워드, 검색어 추천, 핫플/인생샷/강추 표현을 쓰지 마라.
-다른 여행의 기억이나 해운대 기본 템플릿을 섞지 마라.
+  return `너는 한국어 여행 다큐멘터리 나레이터다. 유튜브 여행 에세이처럼 쓴다.
+존댓말 일기("~했습니다") 나열을 쓰지 마라. "성산일출봉에 갔습니다" 같은 문장 금지.
+과장 광고, 해시태그, SEO, 핫플/인생샷/강추 표현을 쓰지 마라.
 
 필수 규칙:
-- 사진 배열 순서가 곧 여행 동선이다. story는 사진1→사진2→… 순으로 장면을 바꾼다.
-- 선택한 관광지 이름을 본문에 실제로 넣는다.
+- 현재형·서술형 나레이션. 예: "제주의 아침은 성산일출봉에서 시작된다."
+- 사진 배열 순서가 곧 여행 동선이다. story는 사진1→사진2 순으로 장면이 바뀐다.
+- 선택한 관광지 이름을 본문에 실제로 넣되, 목록처럼 나열하지 마라.
 - 각 사진의 caption, objects, visualTags, scene을 해당 문단에 반영한다. 없는 풍경을 지어내지 마라.
 - 본문(intro+story+places+closing)은 1000~1500자.
-- 말투는 천천히, 짧게, 존댓말에 가깝게. 60대 여행 감성.
-- 주차 정보, 차박 가능 여부, 맛집 2~3곳을 사실에 가깝게 적는다. 없으면 확인이 필요하다고만 적는다.
-- 금지 문장: ${BANNED_PHRASES.join(' / ')}
+- 풍경 묘사와 감정을 적당히 넣는다. 마지막은 총평으로 마무리한다.
+- 주차, 차박 가능 여부, 맛집 2~3곳을 총평 근처에 자연스럽게 넣는다.
+- 같은 문장 반복 금지. 금지 문장: ${BANNED_PHRASES.join(' / ')}
 - 이모지 금지.
 
 여행 제목: ${trip?.title || story.summary || photos[0]?.place || '여행'}

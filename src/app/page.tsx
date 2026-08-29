@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { PlaceItem, PlaceLocation, PlacePhoto, PlacesSearchResponse } from '@/types/place';
+import { PlaceDetails, PlaceItem, PlaceLocation, PlacePhoto, PlacesSearchResponse } from '@/types/place';
 import {
   clonePlaces,
   createTravelMapId,
@@ -14,20 +14,16 @@ import { filesToPlacePhotos, isQuotaExceeded, MAX_PHOTOS_PER_PLACE } from '@/lib
 import { analyzePlacePhotos } from '@/lib/photoAiClient';
 import { essaySimilarity, generateTravelBlogEssay, reviewMeetsRules, TravelBlogDraft } from '@/lib/travelBlogEssay';
 import { photoAnalysesFromPlaces } from '@/lib/blog/photoFacts';
+import { readSearchSession, writeSearchSession } from '@/lib/searchSessionStorage';
 import { TravelMap } from '@/types/travelMap';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
 import MapDomView from '@/components/MapDomView';
+import PlaceDetailCard from '@/components/PlaceDetailCard';
 import SimQueryRedirect from '@/components/SimQueryRedirect';
 import AuthControls from '@/components/AuthControls';
 import { MapManager } from '@/services/MapManager';
 
 const SEOUL: PlaceLocation = { latitude: 37.5665, longitude: 126.978 };
-
-function formatMapDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`;
-}
 
 function collectTripPhotos(places: PlaceItem[]): PlacePhoto[] {
   const photos: PlacePhoto[] = [];
@@ -90,6 +86,10 @@ export default function HomePage() {
   const [tripPhotos, setTripPhotos] = useState<PlacePhoto[]>([]);
   const [center, setCenter] = useState<PlaceLocation>(SEOUL);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [detailPlace, setDetailPlace] = useState<PlaceItem | null>(null);
+  const [details, setDetails] = useState<PlaceDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [travelMaps, setTravelMaps] = useState<TravelMap[]>([]);
@@ -105,16 +105,38 @@ export default function HomePage() {
   const [reviewCopyNotice, setReviewCopyNotice] = useState('');
   const [lastReviewFingerprint, setLastReviewFingerprint] = useState('');
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const sessionReadyRef = useRef(false);
+  const placesRef = useRef<PlaceItem[]>([]);
+  placesRef.current = places;
   const { installed, hint: installHint, install: installApp } = usePwaInstall();
 
   const selectedPlaces = places.filter((place) => checkedIds.includes(place.id));
   const tripTitle = currentQuery.trim() || keyword.trim() || '여행';
 
-  const handleSelectPlace = useCallback((id: string) => {
-    setSelectedPlaceId(id);
-  }, []);
+  const persistSession = (
+    nextPlaces: PlaceItem[],
+    nextChecked: string[],
+    nextPhotos: PlacePhoto[],
+    nextQuery = currentQuery,
+    nextKeyword = keyword,
+    nextCenter = center,
+    nextLoadedId = loadedMapId,
+    nextSelected = selectedPlaceId
+  ) => {
+    writeSearchSession({
+      query: nextQuery,
+      keyword: nextKeyword,
+      center: nextCenter,
+      places: nextPlaces,
+      checkedIds: nextChecked,
+      selectedPlaceId: nextSelected,
+      loadedMapId: nextLoadedId,
+      photos: nextPhotos,
+    });
+  };
 
   const persistTrip = (nextPlaces: PlaceItem[], nextChecked: string[], nextPhotos: PlacePhoto[]) => {
+    persistSession(nextPlaces, nextChecked, nextPhotos);
     const chosen = nextPlaces.filter((place) => nextChecked.includes(place.id));
     const snapshot = applyTripPhotos(chosen.length ? chosen : nextPlaces, nextChecked, nextPhotos);
     const title = currentQuery.trim() || keyword.trim() || '여행';
@@ -129,9 +151,7 @@ export default function HomePage() {
         if (updated) setTravelMaps(updated);
         return;
       }
-      const existing = travelMaps.find(
-        (map) => (map.sourceQuery || map.title) === title
-      );
+      const existing = travelMaps.find((map) => (map.sourceQuery || map.title) === title);
       if (existing) {
         const updated = updateTravelMap(existing.id, {
           title,
@@ -162,20 +182,110 @@ export default function HomePage() {
     }
   };
 
-  /* eslint-disable react-hooks/set-state-in-effect -- 저장 목록을 첫 화면에 올립니다 */
+  const closeOverlays = useCallback(() => {
+    setIsReviewOpen(false);
+    setDetailPlace(null);
+    setDetails(null);
+    setDetailsError('');
+  }, []);
+
+  const openPlaceDetail = useCallback((place: PlaceItem) => {
+    setSelectedPlaceId(place.id);
+    setDetailPlace(place);
+    setDetails(null);
+    setDetailsError('');
+    setDetailsLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/places/details?id=${encodeURIComponent(place.id)}`);
+        const body = (await res.json()) as PlaceDetails & { error?: string };
+        if (!res.ok) throw new Error(body.error || '상세 정보를 불러오지 못했습니다.');
+        setDetails(body);
+      } catch (error) {
+        setDetailsError(error instanceof Error ? error.message : '상세 정보를 불러오지 못했습니다.');
+      } finally {
+        setDetailsLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleSelectPlace = useCallback((id: string) => {
+    setSelectedPlaceId(id);
+  }, []);
+
+  const handleOpenPlaceDetail = useCallback(
+    (id: string) => {
+      const place = placesRef.current.find((item) => item.id === id);
+      if (place) openPlaceDetail(place);
+    },
+    [openPlaceDetail]
+  );
+
+  const handleBack = () => {
+    if (isReviewOpen || detailPlace) {
+      closeOverlays();
+      return;
+    }
+    setMapNotice(places.length ? '검색 결과와 선택한 관광지를 그대로 두었습니다.' : '');
+  };
+
+  /* eslint-disable react-hooks/set-state-in-effect -- 저장 목록과 마지막 검색을 첫 화면에 올립니다 */
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       const maps = await hydrateTravelMaps();
+      const session = await readSearchSession();
       if (cancelled) return;
       setTravelMaps(maps);
       setMapsReady(true);
+      if (session && session.places.length > 0) {
+        setPlaces(session.places);
+        setCheckedIds(session.checkedIds);
+        setTripPhotos(session.photos);
+        setCenter(session.center);
+        setCurrentQuery(session.query);
+        setKeyword(session.keyword || session.query);
+        setSelectedPlaceId(session.selectedPlaceId);
+        setLoadedMapId(session.loadedMapId);
+        setSelectedSavedMapId(session.loadedMapId);
+        const manager = MapManager.getInstance();
+        manager.setTravelMode(true);
+        manager.setPlaces(session.places);
+        if (session.places.length >= 2) manager.fitPlacesBounds(session.places);
+        else manager.setMapCenter(session.center.latitude, session.center.longitude, 14);
+        setMapNotice(`지난 검색 '${session.query || session.keyword}' ${session.places.length}곳을 그대로 두었습니다.`);
+      }
+      sessionReadyRef.current = true;
     })();
     return () => {
       cancelled = true;
     };
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    const onPop = () => closeOverlays();
+    const onShow = () => {
+      if (!sessionReadyRef.current) return;
+      void readSearchSession().then((session) => {
+        if (!session?.places.length) return;
+        setPlaces(session.places);
+        setCheckedIds(session.checkedIds);
+        setTripPhotos(session.photos);
+        setCenter(session.center);
+        setCurrentQuery(session.query);
+        setKeyword(session.keyword || session.query);
+        setSelectedPlaceId(session.selectedPlaceId);
+        setLoadedMapId(session.loadedMapId);
+      });
+    };
+    window.addEventListener('popstate', onPop);
+    window.addEventListener('pageshow', onShow);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      window.removeEventListener('pageshow', onShow);
+    };
+  }, [closeOverlays]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,6 +294,7 @@ export default function HomePage() {
     setErrorMsg('');
     setMapError('');
     setMapNotice('');
+    closeOverlays();
     try {
       const res = await fetch('/api/places', {
         method: 'POST',
@@ -193,22 +304,23 @@ export default function HomePage() {
       const data: PlacesSearchResponse & { error?: string } = await res.json();
       if (!res.ok) throw new Error(data.error || '장소를 검색할 수 없습니다.');
       const nextPlaces = clonePlaces(data.places);
-      const nextCenter = data.center ?? nextPlaces[0]?.location;
+      const nextCenter = data.center ?? nextPlaces[0]?.location ?? SEOUL;
       const nextChecked = nextPlaces.map((place) => place.id);
       const manager = MapManager.getInstance();
       manager.setTravelMode(true);
       manager.setPlaces(nextPlaces);
       if (nextPlaces.length >= 2) manager.fitPlacesBounds(nextPlaces);
-      else if (nextCenter) manager.setMapCenter(nextCenter.latitude, nextCenter.longitude, 14);
+      else manager.setMapCenter(nextCenter.latitude, nextCenter.longitude, 14);
       setPlaces(nextPlaces);
       setCheckedIds(nextChecked);
       setTripPhotos([]);
-      if (nextCenter) setCenter(nextCenter);
+      setCenter(nextCenter);
       setCurrentQuery(data.query);
       setSelectedPlaceId(null);
       setLoadedMapId(null);
       setSelectedSavedMapId(null);
       setReviewDraft(null);
+      persistSession(nextPlaces, nextChecked, [], data.query, keyword.trim(), nextCenter, null, null);
       setMapNotice(`추천 관광지 ${nextPlaces.length}곳입니다. 갈 곳을 고르세요.`);
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : '검색 도중 오류가 발생했습니다.');
@@ -257,17 +369,20 @@ export default function HomePage() {
     const snapshot = clonePlaces(map.places);
     const nextCenter = snapshot[0]?.location ?? SEOUL;
     const nextPhotos = collectTripPhotos(snapshot);
+    const nextChecked = snapshot.map((place) => place.id);
+    const nextQuery = map.sourceQuery || map.title;
     setPlaces(snapshot);
-    setCheckedIds(snapshot.map((place) => place.id));
+    setCheckedIds(nextChecked);
     setTripPhotos(nextPhotos);
     setCenter(nextCenter);
     setSelectedSavedMapId(map.id);
     setLoadedMapId(map.id);
-    setCurrentQuery(map.sourceQuery || map.title);
-    setKeyword(map.sourceQuery || map.title);
+    setCurrentQuery(nextQuery);
+    setKeyword(nextQuery);
     setSelectedPlaceId(null);
     setReviewDraft(null);
     setMapError('');
+    persistSession(snapshot, nextChecked, nextPhotos, nextQuery, nextQuery, nextCenter, map.id, null);
     setMapNotice(`'${map.title}'을 불러왔습니다. 장소 ${snapshot.length}곳.`);
     MapManager.getInstance().setTravelMode(true);
     MapManager.getInstance().setPlaces(snapshot);
@@ -360,9 +475,19 @@ export default function HomePage() {
     <main className="flex flex-col h-dvh bg-slate-50">
       <SimQueryRedirect />
       <header className="flex items-center justify-between gap-2 px-3 py-3 bg-white border-b shrink-0 md:px-6 border-slate-200">
-        <div className="min-w-0">
-          <p className="text-xl font-black text-amber-600">노을</p>
-          <p className="text-base font-semibold text-slate-700">여행지 추천 · 여행 후기</p>
+        <div className="flex items-center min-w-0 gap-2">
+          <button
+            type="button"
+            onClick={handleBack}
+            className="flex items-center justify-center text-2xl font-black rounded-xl shrink-0 w-14 h-14 bg-slate-100 text-slate-800"
+            aria-label="뒤로가기"
+          >
+            ←
+          </button>
+          <div className="min-w-0">
+            <p className="text-xl font-black text-amber-600">노을</p>
+            <p className="text-base font-semibold text-slate-700">여행지 추천 · 여행 후기</p>
+          </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <AuthControls />
@@ -381,7 +506,7 @@ export default function HomePage() {
         <p className="px-3 py-2 text-lg font-bold text-center text-slate-900 bg-amber-100">{installHint}</p>
       )}
 
-      <div className="workspace">
+      <div className="flex-1 min-h-0 workspace">
         <form onSubmit={handleSearch} className="p-4 border-b shrink-0 workspace-search border-slate-100">
           <label className="block mb-2 text-lg font-bold text-slate-800">1. 어디로 가세요?</label>
           <div className="flex gap-2">
@@ -430,9 +555,9 @@ export default function HomePage() {
               {places.map((place, idx) => {
                 const checked = checkedIds.includes(place.id);
                 return (
-                  <label
+                  <div
                     key={place.id}
-                    className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${
+                    className={`flex items-center gap-3 p-3 rounded-xl border ${
                       checked ? 'border-amber-500 bg-amber-50' : 'border-slate-200 bg-white'
                     }`}
                   >
@@ -440,25 +565,26 @@ export default function HomePage() {
                       type="checkbox"
                       checked={checked}
                       onChange={() => handleTogglePlace(place.id)}
-                      className="w-7 h-7 accent-amber-600 shrink-0"
+                      className="w-8 h-8 accent-amber-600 shrink-0"
+                      aria-label={`${place.name} 선택`}
                     />
                     <button
                       type="button"
-                      onClick={() => setSelectedPlaceId(place.id)}
+                      onClick={() => openPlaceDetail(place)}
                       className="flex-1 min-w-0 text-left"
                     >
                       <span className="text-lg font-bold text-slate-900">
                         {idx + 1}. {place.name}
                       </span>
                     </button>
-                  </label>
+                  </div>
                 );
               })}
             </div>
           )}
         </div>
 
-        <div className="p-4 overflow-y-auto border-t workspace-saved border-slate-200 bg-slate-50/80">
+        <div className="p-3 overflow-y-auto border-t workspace-saved border-slate-200 bg-slate-50/80">
           <input
             ref={photoInputRef}
             type="file"
@@ -472,16 +598,16 @@ export default function HomePage() {
             type="button"
             onClick={() => photoInputRef.current?.click()}
             disabled={isPhotoBusy}
-            className="w-full mb-3 text-lg font-bold text-slate-800 bg-white border-2 border-slate-300 rounded-xl min-h-14 hover:bg-slate-50 disabled:text-slate-400"
+            className="w-full mb-2 text-lg font-bold text-slate-800 bg-white border-2 border-slate-300 rounded-xl min-h-14 hover:bg-slate-50 disabled:text-slate-400"
           >
             {isPhotoBusy ? '사진 준비 중...' : tripPhotos.length > 0 ? `사진 더 올리기 (${tripPhotos.length}장)` : '사진 올리기'}
           </button>
           {tripPhotos.length > 0 && (
-            <div className="flex gap-2 mb-3 overflow-x-auto pb-1">
+            <div className="flex gap-2 mb-2 overflow-x-auto pb-1">
               {tripPhotos.map((photo, index) => (
                 <div key={photo.id} className="relative shrink-0">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={photo.dataUrl} alt={`${index + 1}번째 사진`} className="object-cover w-20 h-20 rounded-xl bg-slate-100" />
+                  <img src={photo.dataUrl} alt={`${index + 1}번째 사진`} className="object-cover w-16 h-16 rounded-xl bg-slate-100" />
                   <button
                     type="button"
                     onClick={() => handleDeletePhoto(photo.id)}
@@ -498,7 +624,7 @@ export default function HomePage() {
             type="button"
             onClick={handleGenerateReview}
             disabled={isReviewGenerating}
-            className="w-full mb-4 text-xl font-black text-white rounded-xl min-h-16 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
+            className="w-full mb-3 text-xl font-black text-white rounded-xl min-h-14 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
           >
             {isReviewGenerating ? '후기 작성 중...' : '여행 후기 생성'}
           </button>
@@ -511,34 +637,32 @@ export default function HomePage() {
           ) : travelMaps.length === 0 ? (
             <p className="text-base text-slate-400">아직 저장된 여행이 없습니다.</p>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-1">
               {travelMaps.map((map) => (
                 <div
                   key={map.id}
-                  className={`p-3 rounded-xl border ${
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded-xl border ${
                     selectedSavedMapId === map.id ? 'border-slate-700 bg-white' : 'border-slate-200 bg-white'
                   }`}
                 >
-                  <p className="text-lg font-bold text-slate-800">{map.title}</p>
-                  <p className="mt-1 text-base text-slate-500">
-                    {formatMapDate(map.updatedAt || map.createdAt)} · 장소 {map.places.length}곳
-                  </p>
-                  <div className="flex gap-2 mt-2">
-                    <button
-                      type="button"
-                      onClick={() => handleLoadTravelMap(map)}
-                      className="flex-1 text-lg font-bold text-white rounded-xl min-h-12 bg-blue-600 hover:bg-blue-700"
-                    >
-                      불러오기
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteTravelMap(map)}
-                      className="flex-1 text-lg font-bold text-red-600 border border-red-200 rounded-xl min-h-12 hover:bg-red-50"
-                    >
-                      삭제
-                    </button>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base font-bold truncate text-slate-800">{map.title}</p>
+                    <p className="text-sm text-slate-500">{map.places.length}곳</p>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => handleLoadTravelMap(map)}
+                    className="px-3 text-base font-bold text-white rounded-lg min-h-11 bg-blue-600"
+                  >
+                    불러오기
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteTravelMap(map)}
+                    className="px-3 text-base font-bold text-red-600 border border-red-200 rounded-lg min-h-11"
+                  >
+                    삭제
+                  </button>
                 </div>
               ))}
             </div>
@@ -551,25 +675,31 @@ export default function HomePage() {
             places={places}
             selectedPlaceId={selectedPlaceId}
             onSelectPlace={handleSelectPlace}
+            onOpenPlaceDetail={handleOpenPlaceDetail}
             travelMode
           />
         </div>
       </div>
 
+      {detailPlace && (
+        <PlaceDetailCard
+          place={detailPlace}
+          details={details}
+          isLoading={detailsLoading}
+          error={detailsError}
+          query={currentQuery}
+          onClose={closeOverlays}
+        />
+      )}
+
       {isReviewOpen && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center md:items-center md:p-6">
-          <button
-            type="button"
-            aria-label="후기 닫기"
-            onClick={() => setIsReviewOpen(false)}
-            className="absolute inset-0 bg-slate-900/40"
-          />
-          <div className="relative z-10 flex flex-col w-full max-h-[88vh] p-4 bg-white shadow-sm md:max-w-[640px] md:rounded-2xl rounded-t-2xl">
+        <div className="fixed inset-0 z-[60] flex flex-col bg-white md:items-center md:justify-center md:bg-slate-900/40 md:p-6">
+          <div className="relative z-10 flex flex-col w-full h-full max-h-full p-4 bg-white md:h-auto md:max-h-[88vh] md:max-w-[640px] md:rounded-2xl">
             <div className="flex items-start justify-between gap-3 mb-3">
               <h2 className="text-xl font-black text-slate-800">여행 후기</h2>
               <button
                 type="button"
-                onClick={() => setIsReviewOpen(false)}
+                onClick={closeOverlays}
                 className="flex items-center justify-center text-2xl font-bold bg-slate-100 rounded-full shrink-0 w-12 h-12 text-slate-700"
                 aria-label="닫기"
               >
@@ -597,7 +727,7 @@ export default function HomePage() {
               </button>
               <button
                 type="button"
-                onClick={() => setIsReviewOpen(false)}
+                onClick={closeOverlays}
                 className="flex-1 text-lg font-bold text-slate-700 bg-white border border-slate-300 rounded-xl min-h-14"
               >
                 닫기
