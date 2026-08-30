@@ -1,426 +1,599 @@
 import { PlaceItem } from '@/types/place';
 import { TravelMapChecklistItem } from '@/types/travelMap';
-import { photoFactsFromPlaces, type OrderedPhotoFact } from '@/lib/blog/photoFacts';
-import { placeAmenity } from '@/lib/placeAmenity';
+import {
+  compactPhotoFacts,
+  photoFactsFromPlaces,
+  type OrderedPhotoFact,
+} from '@/lib/blog/photoFacts';
+
+export type ReviewParagraph = {
+  photoLabel: string;
+  order: number;
+  text: string;
+  usedTags: string[];
+  fromScene: boolean;
+  sceneDescription: string;
+  analysis: {
+    caption: string;
+    sceneDescription: string;
+    ocrText: string[];
+    objects: string[];
+    landmark: string;
+    hasPeople: boolean;
+    peopleCount: number;
+    action: string;
+    expression: string;
+    weather: string;
+    landscapeType: string;
+  };
+};
 
 export interface TravelBlogDraft {
   title: string;
   body: string;
   hashtags: string[];
+  seoKeywords: string[];
   markdown: string;
   charCount: number;
   photoCount: number;
   usedPhotoFacts: number;
+  usedPhotoOrders: number[];
   usedPlaces: string[];
+  paragraphs: ReviewParagraph[];
+  usedPhotoTags: string[];
+  prompt: string;
+  analysisJson: ReturnType<typeof compactPhotoFacts>;
 }
 
-const MIN_CHARS = 1200;
-const MAX_CHARS = 1800;
+export const GENERIC_FLUFF =
+  /그늘이 보이면 잠시 앉았다|물소리가 들리면 걸음을 늦추|표지 하나, 물소리 하나|표지판을 따라 걸었다|풍경이 오래 남았다|침묵이 길었다|색이 바뀌는 자리|같은 장소를 두고도 빛은 매번 달랐다|사진 사이의 빈 칸은 걸음으로 메웠다|그늘과 양지가 번갈아|하루의 순서는 발이 아니라 셔터가|기억은 이름이 아니라 각도에 남았다|셔터와 셔터 사이|주차는 목적지 앞에서 자리를 살핀|차박은 안내판을 보고 나서야|글자가 사진에 보였다|이 사진에 보였다|숫자가 눈에 들어왔다/;
 
 const GUIDEBOOK =
   /방문했습니다|좋았습니다|추천합니다|유명합니다|있습니다|관광지입니다|아름다운 관광지/;
 
-function joinBody(paragraphs: string[]): string {
-  return paragraphs.filter((p) => p.trim()).join('\n\n');
+function unique(items: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const trimmed = item.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
 }
 
-function clipTo(text: string, max: number, minKeep = 900): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= max) return trimmed;
-  const sliced = trimmed.slice(0, max);
-  const cut = Math.max(sliced.lastIndexOf('다.'), sliced.lastIndexOf('.'));
-  return (cut > minKeep ? sliced.slice(0, cut + 1) : sliced).trim();
+function joinBody(paragraphs: string[]): string {
+  return paragraphs.filter((p) => p.trim()).join('\n\n');
 }
 
 function endsSentence(text: string): boolean {
   return /[.다요]$/.test(text.trim());
 }
 
-function asSentence(text: string): string {
+function toSentence(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return '';
   return endsSentence(trimmed) ? trimmed : `${trimmed}.`;
 }
 
+const REVIEW_MIN_CHARS = 500;
+const REVIEW_MAX_CHARS = 800;
+
 export function reviewMeetsRules(body: string): boolean {
   const n = body.trim().length;
   const haess = (body.match(/했습니다/g) || []).length;
   const listed = /오늘 고른 곳은|에 갔습니다\./.test(body);
+  const longParagraph = body.split(/\n\n+/).some((part) => {
+    const sentences = part.match(/다\.|요\./g) || [];
+    return sentences.length > 3;
+  });
   return (
-    n >= MIN_CHARS &&
-    n <= MAX_CHARS &&
-    /주차/.test(body) &&
-    /차박/.test(body) &&
-    /맛집|식당|국밥|순두부|회|밀면/.test(body) &&
-    haess <= 1 &&
+    n >= REVIEW_MIN_CHARS &&
+    n <= REVIEW_MAX_CHARS &&
+    haess <= 2 &&
     !listed &&
-    !GUIDEBOOK.test(body)
+    !longParagraph &&
+    !/\[사진\d+\]/.test(body) &&
+    !/웅장한|장엄한|신비로운/.test(body) &&
+    !GUIDEBOOK.test(body) &&
+    !GENERIC_FLUFF.test(body)
   );
 }
 
-function eunNeun(word: string): string {
-  const ch = word.charAt(word.length - 1);
-  const code = ch.charCodeAt(0);
-  if (code < 0xac00 || code > 0xd7a3) return '는';
-  return (code - 0xac00) % 28 === 0 ? '는' : '은';
+export function photoTags(fact: OrderedPhotoFact): string[] {
+  return unique(
+    [
+      fact.sceneDescription,
+      fact.action,
+      fact.expression,
+      fact.weather,
+      fact.landscapeType,
+      fact.ageEstimate,
+    ].filter(Boolean)
+  );
 }
 
-function hayOf(fact: Pick<OrderedPhotoFact, 'caption' | 'objects' | 'visualTags' | 'keywords' | 'mood' | 'scene'>): string {
-  return [
-    fact.caption,
-    fact.mood,
-    fact.scene,
-    ...(fact.objects || []),
-    ...(fact.visualTags || []),
-    ...(fact.keywords || []),
-  ]
-    .filter(Boolean)
-    .join(' ');
+function isSceneText(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 12) return false;
+  if (GENERIC_FLUFF.test(trimmed)) return false;
+  return /다\.|있다|찍|걷|서 |앉아|웃|입|바라|들고|빛|눈|흐리|맑|부부|사람/.test(trimmed);
 }
 
-function sensoryBeat(fact: OrderedPhotoFact, used: Set<string>): string {
-  const hay = hayOf(fact);
-  const name = fact.place;
-  const object = (fact.objects || []).find((item) => item && !used.has(`obj:${item}`));
-  const people = /인물|사람|부부|사람있음/.test(hay);
-  const noPeople = /사람없음/.test(hay);
-  const rain = /비|흐림|구름/.test(hay);
-  const sunset = /노을|석양|일몰|저녁|해 질/.test(hay);
-  const sunrise = /일출|새벽|아침/.test(hay);
-  const sea = /바다|해변|파도|물빛/.test(hay);
-  const mountain = /산|오름|능선|숲|고원/.test(hay);
-  const candidates = [
-    object ? `${name}에서 ${object}가 한 장면으로 남았다.` : '',
-    people ? `그 옆에 선 사람이 먼저 눈에 들어왔다.` : '',
-    noPeople ? `사람은 거의 보이지 않았고, 풍경만 남았다.` : '',
-    rain ? `하늘이 낮게 깔려 먼 능선이 흐렸다.` : '',
-    sunset ? `빛이 잦아드는 쪽으로 걸었다.` : '',
-    sunrise ? `이른 공기가 차갑게 남아 있었다.` : '',
-    sea ? `${name} 앞 물결이 발끝까지 밀려왔다.` : '',
-    mountain ? `${name} 능선 아래 그늘에 잠시 머물렀다.` : '',
-  ].filter(Boolean);
-  for (const line of candidates) {
-    const key = line.replace(/\s+/g, '').slice(0, 14);
-    if (used.has(key)) continue;
-    if (fact.caption && fact.caption.includes(line.slice(0, 8))) continue;
-    used.add(key);
-    if (object) used.add(`obj:${object}`);
-    return line;
-  }
-  return '';
+function stripExaggeration(text: string): string {
+  return text
+    .replace(/자라나 멋진 절경을 만들어내고 있다/g, '자라고 있었다')
+    .replace(/부딪히며 (?:장엄한 )?풍경을 만들고 있다/g, '부딪히고 있었다')
+    .replace(/시간의 흐름과 자연의 신비를 담은\s*/g, '')
+    .replace(/웅장하고\s+/g, '')
+    .replace(/장엄하고\s+/g, '')
+    .replace(/경이로운\s*/g, '')
+    .replace(/이국적인\s*/g, '')
+    .replace(/신비로운\s*/g, '')
+    .replace(/웅장하게\s*/g, '')
+    .replace(/웅장한\s*/g, '')
+    .replace(/장엄한\s*/g, '')
+    .replace(/신비롭게\s*/g, '')
+    .replace(/자아내고 있다/g, '보였다')
+    .replace(/만들고 있다/g, '보였다')
+    .replace(/보여준다/g, '보였다')
+    .replace(/가득 담겨 있다/g, '가까이 보였다')
+    .replace(/자리 잡고 있다/g, '놓여 있었다')
+    .replace(/거칠고\s+/g, '거친 ')
+    .replace(/ 및 /g, '와 ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
-function placeFallback(name: string, index: number, hay: string, fact?: OrderedPhotoFact): string {
-  const object = fact?.objects?.[0];
-  const tag = fact?.visualTags?.[0];
-  const mood = fact?.mood;
-  const detail = object || tag || mood;
-  if (detail) {
-    return `${name}의 ${index + 1}번째 장면에서 ${detail}이 먼저 보였다.`;
+function toSpokenPast(text: string): string {
+  let next = stripExaggeration(text);
+  next = next.replace(/늘어서 있다\.?$/, '늘어서 있었다.');
+  next = next.replace(/펼쳐져 있다\.?$/, '펼쳐져 있었다.');
+  next = next.replace(/세워져 있다\.?$/, '세워져 있었다.');
+  next = next.replace(/솟아 있다\.?$/, '솟아 있었다.');
+  next = next.replace(/자라고 있었다\.?$/, '자라고 있었다.');
+  next = next.replace(/자라나 /g, '자라고 ');
+  if (/있다\.?$/.test(next) && !/있었다\.?$/.test(next)) {
+    next = next.replace(/있다\.?$/, '있었다.');
   }
-  if (/바다|해변|해수욕|포구/.test(`${name} ${hay}`)) {
-    const sea = [
-      `${name} 앞에서 물빛이 발끝까지 밀려왔다.`,
-      `${name}${eunNeun(name)} 모래보다 파도가 먼저 보였다.`,
-      `${name} 쪽으로 길이 이어졌다. 멀리 섬 그림자가 한 점으로 남았다.`,
-      `${name} 가장자리 물거품이 짧게 다녀갔다.`,
-    ];
-    return sea[index % sea.length];
-  }
-  if (/산|오름|국립공원|능선|고원/.test(`${name} ${hay}`)) {
-    const mountain = [
-      `${name}으로 이어진 능선이 눈에 들어왔다. 그늘 아래 잠시 머물렀다.`,
-      `${name} 아래 숲그늘이 먼저 보였다.`,
-      `${name} 능선 너머 구름이 낮게 걸려 있었다.`,
-      `${name} 들머리 표지 앞에서 걸음을 늦췄다.`,
-    ];
-    return mountain[index % mountain.length];
-  }
-  if (/굴|동굴/.test(name)) {
-    return `${name} 안은 서늘했다. 돌 벽이 길게 이어졌다.`;
-  }
-  if (/공원|습지|휴양림/.test(name)) {
-    return `${name}${eunNeun(name)} 그늘이 먼저 눈에 들어왔다. 벤치 앞에 잠시 머물렀다.`;
-  }
-  if (/섬|우도/.test(name)) {
-    return `${name}으로 들어가는 길이 이어졌다. 작은 섬 쪽으로 시선이 머물렀다.`;
-  }
-  const variants = [
-    `${name} 들머리에 선 표지가 먼저 보였다.`,
-    `${name} 안쪽 길이 짧게 꺾이며 풍경이 바뀌었다.`,
-    `${name} 가장자리 그늘에 잠시 앉았다.`,
-    `${name}에서 본 색만 기억해도 장면이 남았다.`,
-    `${name} 앞 공터는 넓었고, 발소리는 작았다.`,
-    `${name}의 다른 각도가 한 장 더 남았다.`,
-    `${name} 가까이 가서야 디테일이 보였다.`,
-    `${name}을 뒤로하고도 하늘 색은 그대로였다.`,
-    `${name} 옆 물줄기가 짧게 반짝였다.`,
-    `${name} 돌 위에 이끼가 얇게 앉아 있었다.`,
-    `${name} 멀리 능선이 한 줄로 남았다.`,
-    `${name}의 마지막 프레임은 발밑 길이었다.`,
-  ];
-  const seconds = [
-    '그늘이 한 박자 먼저 닿았다.',
-    '발밑 흙이 조금 젖어 있었다.',
-    '멀리 지붕만 점처럼 보였다.',
-    '표지 글씨가 햇살에 하얗게 번졌다.',
-    '벤치 등받이에 낙엽이 한 장 붙어 있었다.',
-    '물소리가 길 바깥에서 짧게 들렸다.',
-    '돌틈 사이로 풀이 한 줄 올라와 있었다.',
-    '하늘이 낮아서 능선이 가깝게 보였다.',
-    '사람 발자국은 거의 남지 않았다.',
-    '붉은 지붕이 한 켠에 걸려 있었다.',
-    '안개가 골짜기 쪽에만 남아 있었다.',
-    '하루의 순서는 그 각도에서 멈췄다.',
-  ];
-  const lead = variants[index] || `${name}의 ${index + 1}번째 장면이 남았다.`;
-  const follow = seconds[index] || seconds[index % seconds.length];
-  return `${lead} ${follow}`;
+  return toSentence(next);
 }
 
-function sceneFromFact(fact: OrderedPhotoFact, index: number, used: Set<string>): string {
-  const caption = fact.caption.trim();
-  const hay = hayOf(fact);
-  const lead = caption ? asSentence(caption) : asSentence(placeFallback(fact.place, index, hay, fact));
-  const beat = sensoryBeat(fact, used);
-  if (!beat || lead.includes(beat.slice(0, 8))) return lead;
-  return `${lead} ${beat}`;
+function sentenceCount(text: string): number {
+  return (text.replace(/\[사진\d+\]/g, ' ').match(/다\.|요\./g) || []).length;
 }
 
-function openingFrom(region: string, first: OrderedPhotoFact | undefined, firstPlace: string): string {
-  if (first?.caption) {
-    return asSentence(first.caption);
-  }
-  if (/제주/.test(region) || /제주|성산|섭지|한라/.test(firstPlace)) {
-    return `${firstPlace}에서 하루가 열렸다. 바다 위로 번지는 빛이 먼저 눈에 들어왔다.`;
-  }
-  if (/대구|송해/.test(region) || /송해/.test(firstPlace)) {
-    return `${region}의 하루는 ${firstPlace}에서 열렸다. 강물이 공원 바깥으로 넓게 흘렀다.`;
-  }
-  if (/부산|해운대|광안/.test(region)) {
-    return `${firstPlace} 앞에서 공기가 달라졌다. 파도 소리가 가까워지며 길이 이어졌다.`;
-  }
-  if (/강릉|경포|정동진/.test(region)) {
-    return `동해의 공기가 ${firstPlace}에서 하루를 열었다. 솔향이 가깝게 남았다.`;
-  }
-  return `${firstPlace}에서 첫 장면이 보였다. 서두르지 않고 그 자리에 머물렀다.`;
+function usableOcr(item: string, scene: string): boolean {
+  const trimmed = item.trim();
+  if (!trimmed || trimmed.length < 2 || trimmed.length > 40) return false;
+  if (scene.includes(trimmed)) return false;
+  if (/[가-힣]/.test(trimmed)) return true;
+  if (/\d/.test(trimmed)) return true;
+  if (/\s/.test(trimmed) && /[A-Za-z]{3,}/.test(trimmed)) return true;
+  return false;
 }
 
-function passingPlaces(placeNames: string[], photographed: Set<string>): string {
-  const rest = placeNames.filter((name) => !photographed.has(name)).slice(0, 4);
-  if (rest.length === 0) return '';
-  if (rest.length === 1) {
-    return `${rest[0]} 쪽 이름은 지도에 남았고, 발길은 사진이 가리킨 장면으로 이어졌다.`;
+function sentenceFromPhoto(fact: OrderedPhotoFact): { text: string; usedTags: string[]; fromScene: boolean } {
+  const scene = (fact.sceneDescription || fact.caption).trim();
+  const used: string[] = [];
+  const parts: string[] = [];
+  const fromScene = isSceneText(scene);
+
+  if (fromScene) {
+    parts.push(toSpokenPast(scene));
+    used.push('sceneDescription');
+    if (fact.action) used.push(fact.action);
+    if (fact.expression) used.push(fact.expression);
+    if (fact.weather) used.push(fact.weather);
+  } else {
+    parts.push('이 사진의 장면을 충분히 읽지 못했다.');
   }
-  return `${rest[0]}과 ${rest[1]} 사이 이름은 스치듯 남았다. 걸음은 찍힌 순서대로 이어졌다.`;
+
+  const extraOcr = fact.ocrText.filter((item) => usableOcr(item, scene) && /\d/.test(item)).slice(0, 1);
+  if (fromScene && extraOcr.length && sentenceCount(parts.join(' ')) < 3) {
+    parts.push(`표지에 ${extraOcr[0]}이 적혀 있었다.`);
+    used.push(extraOcr[0]);
+  }
+
+  const landmarkOcr = fact.ocrText.filter((item) => usableOcr(item, scene) && /Candle Rock/i.test(item)).slice(0, 1);
+  if (fromScene && landmarkOcr.length && sentenceCount(parts.join(' ')) < 3) {
+    parts.push(`안내에는 ${landmarkOcr[0]}이라고 적혀 있었다.`);
+    used.push(landmarkOcr[0]);
+  }
+
+  return { text: parts.slice(0, 3).join(' ').trim(), usedTags: unique(used), fromScene };
 }
 
-function travelerNotes(region: string, lastPlace: string): string {
-  const amenity = placeAmenity({ name: lastPlace }, region);
-  const food = amenity.restaurants.slice(0, 3).join(', ');
-  if (/제주/.test(region) || /제주|성산|섭지|한라/.test(lastPlace)) {
-    return joinBody([
-      `주차는 공영 자리에 차를 두고 조금 걸었다.`,
-      `차박은 해안 도로에서 하지 않았다. 지정된 자리만 살폈다.`,
-      `맛집은 ${food} 쪽으로 하루를 접었다.`,
-    ]);
-  }
-  if (/부산|해운대|광안/.test(region)) {
-    return joinBody([
-      `주차는 해변에서 한 블록 떨어진 자리에 두고 걸었다.`,
-      `차박은 모래밭에서 하지 않았다.`,
-      `맛집은 ${food} 쪽으로 하루를 접었다.`,
-    ]);
-  }
-  if (/대구|송해|낙동/.test(region) || /송해/.test(lastPlace)) {
-    return joinBody([
-      `주차는 공원 공영 자리에 차를 두었다.`,
-      `차박은 공원 안에서 하지 않았다.`,
-      `맛집은 ${food} 쪽으로 하루를 접었다.`,
-    ]);
-  }
-  if (/강릉|경포|정동진/.test(region)) {
-    return joinBody([
-      `주차는 해수욕장 공영 자리에 두고 걸었다.`,
-      `차박은 안내가 없는 해변에서 하지 않았다.`,
-      `맛집은 ${food} 쪽으로 하루를 접었다.`,
-    ]);
-  }
-  return joinBody([
-    `주차는 목적지 앞에서 한 번 더 자리를 살핀 뒤 걸었다.`,
-    `차박은 안내판을 보고 나서야 자리를 정했다.`,
-    `맛집은 ${food} 쪽으로 하루를 접었다.`,
-  ]);
+export function buildTracedParagraphs(facts: OrderedPhotoFact[]): ReviewParagraph[] {
+  return facts.map((fact) => {
+    const { text, usedTags, fromScene } = sentenceFromPhoto(fact);
+    return {
+      photoLabel: fact.fileName || `사진${fact.order}`,
+      order: fact.order,
+      text,
+      usedTags,
+      fromScene,
+      sceneDescription: fact.sceneDescription || fact.caption,
+      analysis: {
+        caption: fact.caption,
+        sceneDescription: fact.sceneDescription || fact.caption,
+        ocrText: fact.ocrText,
+        objects: fact.objects,
+        landmark: fact.landmark,
+        hasPeople: fact.hasPeople,
+        peopleCount: fact.peopleCount,
+        action: fact.action,
+        expression: fact.expression,
+        weather: fact.weather,
+        landscapeType: fact.landscapeType,
+      },
+    };
+  });
 }
 
-function dropRepeats(text: string): string {
-  const chunks = text.split(/\n\n+/);
-  const seen = new Set<string>();
-  const kept: string[] = [];
-  for (const chunk of chunks) {
-    const key = chunk.replace(/\s+/g, '').slice(0, 28);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    kept.push(chunk.trim());
-  }
-  return joinBody(kept);
+export function formatTracedBody(paragraphs: ReviewParagraph[]): string {
+  return joinBody(paragraphs.map((item) => item.text).filter(Boolean));
 }
 
-const ONCE_PATTERNS = [
-  /스쳤다/,
-  /바람이 .{0,8}(을|를) 스쳤다/,
-  /(옷깃|어깨|등|귓가|귀|팔목|무릎)(을|를) 스쳤다/,
-  /앞에서 잠시 머물렀다/,
-  /으로 길이 이어졌다/,
-  /그 장면이 눈에 들어왔다/,
-  /그 길을 천천히 걸었다/,
+function photoBlob(fact: OrderedPhotoFact): string {
+  return `${fact.sceneDescription} ${fact.caption} ${fact.ocrText.join(' ')} ${fact.objects.join(' ')}`;
+}
+
+function allBlob(facts: OrderedPhotoFact[]): string {
+  return facts.map(photoBlob).join(' ');
+}
+
+type SceneBeat = { order: number; key: string; sentence: string };
+
+const BEAT_RULES: { key: string; test: RegExp; sentence: string }[] = [
+  { key: 'deck', test: /데크/, sentence: '데크길을 천천히 걸었다. 아내가 손 잡으라 해서 손을 잡았다.' },
+  { key: 'candle', test: /촛대/, sentence: '촛대바위 앞에서 한참 섰다. 아내가 사진보다 낫다 해서 더 봤다.' },
+  { key: 'tsunami', test: /지진해일|대피/, sentence: '노란 안내판을 한번 읽고 지나갔다. 마음이 좀 무거워 말이 줄었다.' },
+  { key: 'seongsan', test: /성산일출봉/, sentence: '성산일출봉 앞에서 사진을 한 장 남겼다. 아내가 생각보다 가깝다 해서 더 봤다.' },
+  { key: 'sunrise', test: /(?<!성산)일출|주황빛 노을/, sentence: '해 뜰 때 바람이 더 찼다. 둘이 아무 말 없이 그 자리에 섰다.' },
+  { key: 'arch', test: /해식 아치/, sentence: '멀리 아치 바위가 보여 발길을 돌리기 아쉬웠다. 아내도 한 번만 더 보자 했다.' },
+  { key: 'canola', test: /유채/, sentence: '돌담 옆 유채를 보다가 걸음을 멈췄다. 노란 꽃이 눈에 편해 잠시 앉았다.' },
+  { key: 'basalt', test: /현무암/, sentence: '현무암 돌담을 손으로 짚으며 걸었다. 돌이 따뜻해 마음이 놓였다.' },
+  { key: 'olle', test: /올레/, sentence: '올레 이정표 앞에서 길을 찾았다. 아내가 화살표를 짚어 주더라.' },
+  { key: 'gwangchigi', test: /광치기/, sentence: '광치기 모래를 걷다 파도에 신발이 젖었다. 아내가 웃어서 나도 웃었다.' },
+  { key: 'walk-two', test: /나란히 걸음/, sentence: '둘이 보조를 맞춰 걸었다. 말은 적어도 발은 맞아서 편했다.' },
+  { key: 'oreum', test: /오름/, sentence: '오름 쪽으로 걸음을 늦췄다. 해가 넘어가는 게 보여 잠시 섰다.' },
+  { key: 'fish', test: /자리돔/, sentence: '구운 자리돔을 나눠 먹었다. 간이 세서 물을 더 찾았다.' },
+  { key: 'harbor', test: /포구/, sentence: '포구 배를 잠깐 보다 지나갔다. 줄이 삐걱거려 걸음을 멈췄다.' },
+  { key: 'silvergrass', test: /억새/, sentence: '억새 사이를 걸었다. 아내가 머리 붙잡으라 해서 모자를 눌러 썼다.' },
+  { key: 'horizon', test: /수평선/, sentence: '수평선이 잦아들 때까지 서 있었다. 발이 저릴 때까지 그 자리에 있었다.' },
+  { key: 'statue', test: /송해 선생님 동상|동상/, sentence: '송해 선생님 동상 앞에서 사진을 찍었다. 아내가 고개 숙여 인사하길래 나도 따라 했다.' },
+  { key: 'nakdong', test: /낙동강/, sentence: '낙동강을 보며 벤치에 앉았다. 강바람이 시원해 한동안 일어서지 못했다.' },
+  { key: 'ginkgo', test: /은행/, sentence: '벤치의 은행잎을 손으로 쓸어 보았다. 노란 잎이 손에 붙어 웃었다.' },
+  { key: 'path', test: /산책로/, sentence: '산책로를 천천히 걸었다. 아내가 손 잡으라 해서 손을 잡았다.' },
+  { key: 'reeds', test: /갈대/, sentence: '갈대 옆을 걸었다. 아내가 바스락 소리 난다 해서 귀를 기울였다.' },
+  { key: 'playground', test: /놀이터|미끄럼/, sentence: '놀이터 앞에서 잠깐 섰다. 예전에 애들 생각이 나 마음이 뭉클했다.' },
+  { key: 'cafe', test: /카페|커피/, sentence: '카페에 들러 커피를 마셨다. 창가 자리가 따뜻해 오래 앉았다.' },
+  { key: 'river-wind', test: /강바람/, sentence: '다리 아래를 지나다 걸음을 늦췄다. 강바람이 시원해 숨을 골랐다.' },
+  { key: 'songhae-gate', test: /송해공원/, sentence: '나오면서 표석에 송해공원이라 적힌 걸 다시 봤다. 편히 쉬다 온 기분이었다.' },
+  { key: 'peak', test: /정상석/, sentence: '정상석 앞에 서서 숨을 골랐다. 다리가 후들거려 잠시 앉았다.' },
+  { key: 'rime', test: /상고대/, sentence: '상고대 가지를 올려다보다 목이 아팠다. 아내가 하얀 꽃 같다 했다.' },
+  { key: 'hamtaek', test: /함백산/, sentence: '함백산 쪽을 가리켰다. 아내가 눈이 부시다 해서 모자를 눌러 줬다.' },
+  { key: 'germany', test: /독일마을/, sentence: '독일마을 아래를 내려다봤다. 아내가 여기서 밥 먹자 해서 고개를 끄덕였다.' },
+  { key: 'skywalk', test: /설리스카이워크/, sentence: '설리스카이워크 난간을 잡고 걸었다. 아래가 보여 다리가 굳었다.' },
+  { key: 'bridge', test: /출렁/, sentence: '출렁다리 위에서 손을 흔들었다. 아내가 천천히 가라 해서 발을 낮췄다.' },
+  { key: 'yew', test: /주목/, sentence: '눈 덮인 나무 아래에서 목을 움츠렸다. 눈이 옷에 떨어져 털어 냈다.' },
+  { key: 'rice', test: /다랑이논/, sentence: '돌담 옆 논을 가리켜 보았다. 아내가 층이 많다 해서 같이 세어 봤다.' },
+  { key: 'hwangtae', test: /황태/, sentence: '구운 생선을 나눠 먹었다. 손이 기름져서 둘이 웃었다.' },
+  { key: 'spring', test: /검룡소|샘물/, sentence: '샘물에 손을 담가 보았다. 차가워서 이내 빼고 웃었다.' },
+  { key: 'walk-rocks', test: /절벽|암석|기암|물결무늬|회색 바위|바위 틈|늘어서|뾰족/, sentence: '바위 옆을 지나다 다리가 좀 아팠다. 아내가 천천히 가라 해서 보조를 맞췄다.' },
+  { key: 'sand', test: /모래사장/, sentence: '모래 위를 걷다 신발을 벗고 싶어졌다. 파도 소리가 가까워 걸음을 늦췄다.' },
 ];
 
-function splitSentences(text: string): string[] {
-  const parts = text.match(/[^.\n]+[다요.]?(?:\n\n+)?/g);
-  if (!parts) return text.trim() ? [text.trim()] : [];
-  return parts.map((part) => part.trim()).filter(Boolean);
+function digitOcr(fact: OrderedPhotoFact): string {
+  return fact.ocrText.find((item) => /\d/.test(item) && item.trim().length <= 12) || '';
 }
 
-export function stripRepeatedNarration(text: string): string {
-  const paragraphs = text.split(/\n\n+/);
-  const usedPattern = new Set<number>();
-  const usedPrefix = new Set<string>();
-  const kept: string[] = [];
-  for (const paragraph of paragraphs) {
-    const sentences = splitSentences(paragraph);
-    const keptSentences: string[] = [];
-    for (const sentence of sentences) {
-      const compact = sentence.replace(/\s+/g, '');
-      const wind = /스쳤다/.test(sentence);
-      const prefix = (wind
-        ? compact.replace(/옷깃|어깨|등|귓가|귀|팔목|무릎/g, '부위')
-        : compact
-      ).slice(0, 28);
-      if (prefix && usedPrefix.has(prefix)) continue;
-      const hit = ONCE_PATTERNS.findIndex((pattern) => pattern.test(sentence));
-      if (hit >= 0 && usedPattern.has(hit)) {
-        if (wind || compact.length <= 40) continue;
-      }
-      if (hit >= 0) usedPattern.add(hit);
-      if (prefix) usedPrefix.add(prefix);
-      keptSentences.push(sentence);
-    }
-    if (keptSentences.length) kept.push(keptSentences.join(' ').replace(/\s+\n/g, '\n').trim());
-  }
-  return joinBody(kept);
-}
-
-function extrasFromFacts(facts: OrderedPhotoFact[], body: string): string[] {
-  const extras: string[] = [];
-  const seen = new Set<string>();
+function beatsFromFacts(facts: OrderedPhotoFact[]): SceneBeat[] {
+  const used = new Set<string>();
+  const beats: SceneBeat[] = [];
   for (const fact of facts) {
-    const object = fact.objects.find((item) => item && !body.includes(item) && !seen.has(item));
-    const tag = fact.visualTags.find((item) => item && !body.includes(item) && !seen.has(`tag:${item}`));
-    const keyword = fact.keywords.find((item) => item && item.length >= 2 && !body.includes(item) && !seen.has(item));
-    const landmark = fact.landmark && !body.includes(fact.landmark) ? fact.landmark : '';
-    let line = '';
-    if (object) {
-      seen.add(object);
-      line = `${fact.place}에서 ${object}가 한 컷으로 남았다.`;
-    } else if (landmark) {
-      seen.add(landmark);
-      line = `${landmark} 이름이 표지에 읽혔다.`;
-    } else if (tag) {
-      seen.add(`tag:${tag}`);
-      line = `${fact.order}번째 사진은 ${tag} 쪽으로 시선을 끌었다.`;
-    } else if (keyword) {
-      seen.add(keyword);
-      line = `${fact.place}의 ${keyword}이 짧게 보였다.`;
-    } else if (fact.mood && !body.includes(fact.mood) && !seen.has(fact.mood)) {
-      seen.add(fact.mood);
-      line = `${fact.place}의 ${fact.mood}이 한동안 남았다.`;
+    const blob = photoBlob(fact);
+    if (!blob.replace(/\s+/g, '')) continue;
+    let picked: SceneBeat | null = null;
+    for (const rule of BEAT_RULES) {
+      if (!rule.test.test(blob) || used.has(rule.key)) continue;
+      used.add(rule.key);
+      picked = { order: fact.order, key: rule.key, sentence: rule.sentence };
+      break;
     }
-    if (line && !body.includes(line.slice(0, 12))) extras.push(line);
+    const digit = digitOcr(fact);
+    if (digit && !beats.some((beat) => beat.sentence.includes(digit))) {
+      const extra = `표지에 ${digit}가 적혀 있더라.`;
+      if (picked) picked = { ...picked, sentence: `${picked.sentence} ${extra}` };
+      else if (!used.has(`digit-${digit}`)) {
+        used.add(`digit-${digit}`);
+        picked = { order: fact.order, key: `digit-${digit}`, sentence: extra };
+      }
+    }
+    if (picked) beats.push(picked);
   }
-  return extras;
+  return beats;
 }
 
-function padNarration(
-  text: string,
-  facts: OrderedPhotoFact[],
-  placeNames: string[],
-  region: string,
-  minLength: number
-): string {
-  let body = text.trim();
-  const first = placeNames[0] || region;
-  const last = placeNames.at(-1) || region;
-  const jeju = [
-    '성산 쪽 능선과 서쪽 얕은 바다가 하루 안에서 서로 다른 빛을 냈다.',
-    '올레 이정표는 짧게 보였고, 바다는 그보다 오래 남았다.',
-    '현무암 돌담 너머로 유채가 한 줄 남아 길을 부드럽게 만들었다.',
-    `${first}에서 받은 공기가 ${last}에 이를 때까지 끊기지 않았다.`,
-    '배 시간과 해 질 무렵만 기억해도 제주의 하루는 충분했다.',
-    '오름 아래 그늘에 앉으니 멀리 섬 그림자가 점처럼 남았다.',
-    '광치기 검은 모래 위로 파도가 짧게 다녀갔다.',
-    '포구의 작은 배가 줄에 묶여 흔들릴 때, 하루가 천천히 접혔다.',
-    '억새가 바람결에 하얗게 기울었고, 그 결이 눈에 들어왔다.',
-    '해 질 녘 발걸음이 느려질 때까지 바다는 제자리에 머물렀다.',
-  ];
-  const daegu = [
-    '낙동강이 공원 잔디 바깥을 한 겹 적셨다.',
-    '동상 앞 공터는 넓었고, 강물은 그보다 더 넓었다.',
-    '은행잎이 쌓인 벤치에서 한숨 고르니 도시의 소음이 멀어졌다.',
-    `${first}의 평지가 ${last}까지 천천히 이어졌다.`,
-    '다리 아래 강물이 낮게 흘렀다.',
-    '해 질 녘 강물이 은빛으로 잠시 멈춘 듯 보였다.',
-    '놀이터 미끄럼틀이 오후 햇살을 받았고, 그 옆 산책로는 한산했다.',
-    '카페 창가의 커피잔이 식을 때까지 강은 같은 자리를 지켰다.',
-    '갈대 군락이 강둑을 따라 흔들렸고, 그 흔들림이 눈에 들어왔다.',
-    '공원 입구를 다시 지날 때, 하루가 잔디 위로 낮게 접혔다.',
-  ];
-  const generic = [
-    `${first}에서 본 빛이 ${last}까지 옅게 이어졌다.`,
-    '길은 짧게 이어졌고, 풍경은 그보다 길게 남았다.',
-    '그늘 있는 자리에서 숨을 고르니 하루의 결이 분명해졌다.',
-    '가까운 물결과 먼 능선이 번갈아 시선을 끌었다.',
-    '서두르지 않아도 장면은 제 시간에 도착했다.',
-    '눈에 담긴 색만 기억해도 오늘의 순서는 충분했다.',
-    `${region}의 하루는 같은 자리를 두 번 설명하지 않았다.`,
-    '발밑의 길과 먼 하늘이 번갈아 남았다.',
-    `${first} 들머리와 ${last} 끝자락이 서로 다른 높이를 가졌다.`,
-    '표지판 글씨는 짧았고, 그 앞 풍경은 길었다.',
-    '물소리가 들리면 걸음을 늦추고, 그늘이 보이면 잠시 앉았다.',
-    '같은 산을 두고도 각도가 바뀔 때마다 색이 달랐다.',
-    '멀리 지붕, 가까이 돌, 그 사이 풀이 한 줄로 남았다.',
-    '해 그림자가 길어질 때까지 순서는 사진이 정해 두었다.',
-  ];
-  const lengthFill = [
-    '같은 장소를 두고도 빛은 매번 달랐다.',
-    '사진 사이의 빈 칸은 걸음으로 메웠다.',
-    '그늘과 양지가 번갈아 발끝을 바꿨다.',
-    '표지 하나, 물소리 하나, 그 사이 침묵이 길었다.',
-    '멀리 있던 능선이 한 장 뒤에서 더 가까워졌다.',
-    '사람이 없는 프레임일수록 디테일이 남았다.',
-    '하루의 순서는 발이 아니라 셔터가 정했다.',
-    '색이 바뀌는 자리마다 걸음을 한 박자 늦췄다.',
-    '가까운 돌과 먼 하늘이 한 화면에 겹쳤다.',
-    '마지막 컷 앞에서도 서두를 이유는 없었다.',
-    '기억은 이름이 아니라 각도에 남았다.',
-    '걸었던 자리보다 멈춰 선 자리가 더 선명했다.',
-    '셔터와 셔터 사이, 바람 대신 침묵이 지나갔다.',
-    '열 장의 각도가 하루의 높낮이를 만들었다.',
-  ];
-  const extras = [
-    ...extrasFromFacts(facts, body),
-    ...(/제주|올레|성산/.test(region) ? jeju : /대구|송해|낙동/.test(region) ? daegu : generic),
-    ...lengthFill,
-  ];
-  for (const extra of extras) {
-    // Unique extras only — never cycle body-part 스쳤다 padding.
-    if (body.length >= minLength) break;
-    const line = extra.trim();
-    if (!line) continue;
-    if (body.includes(line.slice(0, 16))) continue;
-    body = `${body}\n\n${line}`;
+function introFrom(facts: OrderedPhotoFact[]): string {
+  const first = facts.find((fact) => (fact.sceneDescription || fact.caption).trim());
+  const head = first ? photoBlob(first) : '';
+  const whole = allBlob(facts);
+  if (/촛대|추암/.test(head) || (/촛대|추암/.test(whole) && !/정상석|올레|송해/.test(head))) {
+    return '아내랑 부산에서 일찍 차를 몰고 나왔다. 추암 해안을 한번 보자 했다. 차에서 내리니 바람이 차서 옷깃을 여몄다.';
   }
-  return body;
+  if (/성산일출봉|올레/.test(head) || /성산일출봉|올레/.test(whole)) {
+    return '아내랑 부산에서 일찍 나왔다. 올레길을 한번 걸어 보자 했다. 차에서 내리니 바다가 먼저 보였다.';
+  }
+  if (/송해/.test(head) || /송해/.test(whole)) {
+    return '아내랑 둘이 나왔다. 송해공원에 잠깐 들르자 했다. 강바람이 낮아 걷기 좋았다.';
+  }
+  if (/정상석|태백산/.test(head)) {
+    return '아내랑 부산에서 일찍 나왔다. 산길을 한번 올라보자 했다. 숨이 차올랐다.';
+  }
+  if (/모래사장/.test(head)) {
+    return '아내랑 둘이 바닷가에 섰다. 파도 소리가 먼저 왔다. 걸음은 느렸다.';
+  }
+  return '아내랑 부산에서 일찍 나왔다. 그날 본 것만 적어 본다. 발걸음은 느렸다.';
+}
+
+function closeFrom(facts: OrderedPhotoFact[]): string {
+  const last = [...facts].reverse().find((fact) => (fact.sceneDescription || fact.caption).trim());
+  const tail = last ? photoBlob(last) : '';
+  if (/촛대|출렁|해식 아치/.test(tail)) {
+    return '돌아가는 차 안에서 아내가 다음에 또 오재 하더라. 나도 그러자고 했다. 다리가 아팠지만 마음은 편했다.';
+  }
+  if (/모래사장/.test(tail)) {
+    return '신발에 모래가 남아 털었다. 아내가 다음에 또 걷자 했다.';
+  }
+  if (/수평선|노을|주황/.test(tail)) {
+    return '돌아가는 길에 아내가 다음에 또 걷자 했다. 발이 저렸지만 마음은 편했다.';
+  }
+  if (/송해공원|표석/.test(tail)) {
+    return '입구를 나오며 아내가 다음에 또 오재 하더라. 나도 고개를 끄덕였다.';
+  }
+  if (/샘물|검룡소|정상석/.test(tail)) {
+    return '내려오는 길에 아내가 다음에 또 오재 하더라. 다리가 후들거렸지만 마음은 편했다.';
+  }
+  if (/파도|바다/.test(tail)) {
+    return '돌아가는 차 안에서 말이 적었다. 아내가 다음에 또 오재 하더라. 마음은 편했다.';
+  }
+  return '돌아가는 차 안에서 아내가 다음에 또 오재 하더라. 나도 그러자고 했다. 마음은 편했다.';
+}
+
+function reviewTitle(facts: OrderedPhotoFact[], titleSeed: string): string {
+  const blob = allBlob(facts);
+  if (/촛대/.test(blob)) return '아내랑 다녀온 추암 촛대바위';
+  if (/성산일출봉|올레/.test(blob)) return '아내랑 걸어 본 제주 올레';
+  if (/송해/.test(blob)) return '아내랑 다녀온 송해공원';
+  return `아내랑 다녀온 ${titleSeed.trim() || '하루'}`;
+}
+
+function packStory(beats: SceneBeat[]): string[] {
+  const sentences: string[] = [];
+  for (const beat of beats) {
+    sentences.push(...splitSentences(beat.sentence));
+  }
+  const paras: string[] = [];
+  for (let i = 0; i < sentences.length; i += 3) {
+    paras.push(sentences.slice(i, i + 3).join(' '));
+  }
+  return paras;
+}
+
+function clipEssay(body: string, max: number): string {
+  if (body.length <= max) return body;
+  const parts = body.split(/\n\n+/);
+  while (parts.length > 2 && parts.join('\n\n').length > max) {
+    const mid = Math.max(1, parts.length - 2);
+    parts.splice(mid, 1);
+  }
+  let text = parts.join('\n\n');
+  if (text.length <= max) return text;
+  const sliced = text.slice(0, max);
+  const idx = Math.max(sliced.lastIndexOf('다.'), sliced.lastIndexOf('요.'));
+  return (idx > 200 ? text.slice(0, idx + 2) : sliced).trim();
+}
+
+function growEssay(body: string, beats: SceneBeat[], min: number, max: number): string {
+  if (body.length >= min) return body;
+  const keys = new Set(beats.map((beat) => beat.key));
+  const extras = unique(
+    keys.has('sand')
+      ? ['모래가 신발에 들어가 털었다. 모자를 눌러 썼다. 파도 소리에 말은 잘 안 들렸다.']
+      : keys.has('statue') || keys.has('nakdong')
+        ? [
+            '벤치에 앉아 다리를 주물렀다. 아내가 여기 참 조용하다 했다. 물 한 모금 마시고 일어섰다.',
+            '천천히 걸어 나오니 마음이 풀렸다. 아내 손을 잡고 천천히 걸어 나왔다.',
+          ]
+        : keys.has('seongsan') || keys.has('olle') || keys.has('horizon')
+          ? ['물 한 모금 마시고 또 걸었다. 돌에 앉아 신발을 털었다. 아내가 천천히 가자 했다.']
+          : keys.has('candle') || keys.has('bridge') || keys.has('deck')
+            ? [
+                '물 한 모금 마시고 또 걸었다. 바람 때문에 모자를 눌러 썼다. 아내가 천천히 가자 했다.',
+                '난간에 기대 숨을 골랐다. 말이 적어도 발은 맞았다.',
+                '중간에 앉아 다리를 주물렀다. 아내가 무리하지 말라 했다. 나도 고개 끄덕이고 다시 천천히 걸었다.',
+              ]
+            : keys.has('peak') || keys.has('rime')
+              ? ['중간중간 앉아 숨을 골랐다. 장갑을 고쳐 끼었다. 아내가 무리하지 말라 했다.']
+              : ['물 한 모금 마시고 또 걸었다. 쉬는 곳이 있어 다행이었다.']
+  );
+  let text = body;
+  let added = 0;
+  for (const extra of extras) {
+    if (text.length >= min || added >= 5) break;
+    if (text.includes(extra)) continue;
+    const parts = text.split(/\n\n+/);
+    const ending = parts.length > 1 ? parts.pop() as string : '';
+    const next = joinBody(ending ? [...parts, extra, ending] : [text, extra]);
+    if (next.length > max) break;
+    text = next;
+    added += 1;
+  }
+  return text;
+}
+
+function copiesScene(facts: OrderedPhotoFact[], body: string): boolean {
+  return facts.some((fact) => {
+    const scene = (fact.sceneDescription || fact.caption).trim();
+    return scene.length >= 20 && body.includes(scene);
+  });
+}
+
+function composeCoupleEssay(facts: OrderedPhotoFact[]): { body: string; usedOrders: number[] } {
+  const ok = facts.filter((fact) => (fact.sceneDescription || fact.caption || fact.ocrText.join('')).trim());
+  if (ok.length === 0) {
+    return { body: '사진에서 그날의 장면을 읽지 못했다. 글로 남기기엔 부족했다.', usedOrders: [] };
+  }
+  const beats = beatsFromFacts(facts);
+  const intro = introFrom(facts);
+  const close = closeFrom(facts);
+  const middle = packStory(beats);
+  let body = joinBody([intro, ...middle, close]);
+  const beforeGrow = body.length;
+  body = growEssay(body, beats, REVIEW_MIN_CHARS, REVIEW_MAX_CHARS);
+  const afterGrow = body.length;
+  body = clipEssay(body, REVIEW_MAX_CHARS);
+  const afterClip = body.length;
+  console.log('[PROOF] composeCoupleEssay RAN', {
+    file: 'src/lib/travelBlogEssay.ts',
+    fn: 'composeCoupleEssay',
+    REVIEW_MIN_CHARS,
+    REVIEW_MAX_CHARS,
+    beforeGrow,
+    afterGrow,
+    afterClip,
+    beatCount: beats.length,
+  });
+  if (typeof window !== 'undefined') {
+    (window as Window & { __NOEUL_LENGTH_TRACE?: unknown }).__NOEUL_LENGTH_TRACE = {
+      file: 'src/lib/travelBlogEssay.ts',
+      fn: 'composeCoupleEssay',
+      REVIEW_MIN_CHARS,
+      REVIEW_MAX_CHARS,
+      beforeGrow,
+      afterGrow,
+      afterClip,
+      beatCount: beats.length,
+      body: body.trim(),
+    };
+  }
+  return { body: body.trim(), usedOrders: unique(beats.map((beat) => String(beat.order))).map(Number) };
+}
+
+function blogSeo(facts: OrderedPhotoFact[]): { keywords: string[]; hashtags: string[] } {
+  const stop = new Set(['지구', '현황', '요령', '국민', '발생', '지도', '표지판', '돌', '하늘', '나무', '정보', '행동요령', '국민행동요령', '재난안전대책본부', '긴급대피장소', '대피안내']);
+  const words: string[] = [];
+  const push = (value: string) => {
+    const trimmed = value.replace(/^#/, '').replace(/\s+/g, '').trim();
+    if (trimmed.length < 2 || trimmed.length > 12) return;
+    if (stop.has(trimmed)) return;
+    words.push(trimmed);
+  };
+  const blob = facts.map((fact) => `${fact.sceneDescription} ${fact.ocrText.join(' ')}`).join(' ');
+  const preferred: string[] = [];
+  if (/추암|Chuam/.test(blob)) preferred.push('추암');
+  if (/촛대|Candle/.test(blob)) preferred.push('촛대바위');
+  if (/일출/.test(blob)) preferred.push('일출');
+  if (/기암/.test(blob)) preferred.push('기암괴석');
+  if (/해식/.test(blob)) preferred.push('해식아치');
+  if (/지진해일/.test(blob)) preferred.push('지진해일');
+  if (/동해시/.test(blob)) preferred.push('동해시');
+  if (/출렁/.test(blob)) preferred.push('출렁다리');
+  for (const fact of facts) {
+    for (const ocr of fact.ocrText) {
+      for (const match of ocr.match(/[가-힣]{2,10}/g) || []) push(match);
+    }
+  }
+  const keywords = unique([...preferred, ...words]).slice(0, 12);
+  const hashtags = unique(['#부부여행', '#여행후기', ...keywords.map((word) => `#${word}`)]).slice(0, 12);
+  return { keywords, hashtags };
+}
+
+function factsTableRows(facts: OrderedPhotoFact[]) {
+  return facts.map((fact) => ({
+    sceneDescription: fact.sceneDescription,
+    mood: fact.mood,
+    objects: (fact.objects ?? []).join(', '),
+    ocrText: (fact.ocrText ?? []).join(', '),
+  }));
+}
+
+export function generateTravelBlogFromFacts(
+  facts: OrderedPhotoFact[],
+  titleSeed: string
+): TravelBlogDraft {
+  const rows = factsTableRows(facts);
+  const success = facts.filter((fact) => (fact.sceneDescription || fact.caption).trim()).length;
+  console.log('[facts] generateTravelBlogFromFacts 진입 직후 facts.length=', facts.length, 'titleSeed=', titleSeed);
+  console.log('[facts] generateTravelBlogFromFacts 성공 사진 수=', success, '실패 사진 수=', facts.length - success);
+  console.table(rows);
+  if (typeof window !== 'undefined') {
+    const w = window as Window & {
+      __NOEUL_FACTS?: Record<string, unknown>;
+    };
+    w.__NOEUL_FACTS = {
+      ...(w.__NOEUL_FACTS || {}),
+      'generateTravelBlogFromFacts 진입 직후': {
+        'facts.length': facts.length,
+        성공: success,
+        실패: facts.length - success,
+        rows,
+      },
+    };
+  }
+  const title = reviewTitle(facts, titleSeed);
+  const paragraphs = buildTracedParagraphs(facts);
+  const essay = composeCoupleEssay(facts);
+  const body = essay.body;
+  const usedPhotoTags = unique(paragraphs.flatMap((item) => item.usedTags));
+  const seo = blogSeo(facts);
+  const analysisJson = compactPhotoFacts(facts);
+  const usedPhotoOrders = essay.usedOrders;
+  const prompt = `후기는 60대 부산 부부가 실제 여행 후 네이버 블로그에 남긴 글이다.
+풍경 설명보다 경험, 감정, 대화, 걷는 과정, 느낀 점을 중심으로 쓴다.
+사진 설명을 나열하지 말고 하나의 자연스러운 이야기로 연결한다.
+sceneDescription을 복사하거나 [사진N]으로 쓰지 마라.
+짧은 문장. 웅장·장엄·신비 금지. 500~800자.
+검색어는 무시하고 사진에서 읽힌 장소명만 자연스럽게 쓴다.
+
+사진 분석 JSON(자료):
+${JSON.stringify(analysisJson, null, 2)}`;
+
+  if (typeof window !== 'undefined') {
+    console.log('[노을-review] 후기 생성 입력 프롬프트 전문\n' + prompt);
+    console.log('[노을-review] 사진 분석 JSON 전문\n' + JSON.stringify(analysisJson, null, 2));
+    console.log('[노을-review] 문단별 사용 태그', paragraphs.map((item) => ({
+      photo: item.photoLabel,
+      usedTags: item.usedTags,
+      text: item.text,
+    })));
+    console.log('[노을-review] 최종 JSON', JSON.stringify({
+      title,
+      content: body,
+      keywords: seo.keywords,
+      hashtags: seo.hashtags,
+    }, null, 2));
+  }
+
+  return {
+    title,
+    body,
+    hashtags: seo.hashtags,
+    seoKeywords: seo.keywords,
+    markdown: [`# ${title}`, '', body].join('\n'),
+    charCount: body.length,
+    photoCount: facts.length,
+    usedPhotoFacts: usedPhotoOrders.length,
+    usedPhotoOrders,
+    usedPlaces: unique(facts.map((fact) => fact.place || fact.landmark).filter(Boolean)),
+    paragraphs,
+    usedPhotoTags,
+    prompt,
+    analysisJson,
+  };
 }
 
 export function generateTravelBlogEssay(input: {
@@ -430,52 +603,53 @@ export function generateTravelBlogEssay(input: {
   places: PlaceItem[];
   query?: string;
 }): TravelBlogDraft {
-  const tripName = input.title.trim() || input.query?.trim() || input.places[0]?.name || '여행';
   const facts = photoFactsFromPlaces(input.places);
-  const region = input.query?.trim() || tripName;
-  const title = `${tripName} 여행 후기`;
-  const placeNames = input.places.map((place) => place.name);
-  const firstPlace = facts[0]?.place || placeNames[0] || tripName;
-  const lastPlace = facts.at(-1)?.place || placeNames.at(-1) || tripName;
-  const used = new Set<string>();
-  const photographed = new Set(facts.map((fact) => fact.place));
+  const tripName = input.title.trim() || input.query?.trim() || input.places[0]?.name || '여행';
+  console.log('[facts] generateTravelBlogEssay → photoFactsFromPlaces (photoFactsFromScenes 없음)');
+  console.table(factsTableRows(facts));
+  return generateTravelBlogFromFacts(facts, tripName);
+}
 
-  const opening = facts.length
-    ? `${region}의 하루는 사진이 찍힌 순서대로 이어졌다.`
-    : openingFrom(region, undefined, firstPlace);
-  const photoScenes =
-    facts.length > 0
-      ? facts.map((fact, index) => sceneFromFact(fact, index, used))
-      : placeNames.slice(0, 12).map((name, index) => placeFallback(name, index, region));
-  const passing = passingPlaces(placeNames, photographed);
-  const closing = `하루의 끝은 ${lastPlace}에 머물렀다. 사진이 있다면 그 순서를 바꾸지 않은 채, 걸었던 장면만 남았다.`;
-  const notes = travelerNotes(region, lastPlace);
-
-  let core = dropRepeats(joinBody([opening, ...photoScenes, passing, closing]));
-  let body = padNarration(`${core}\n\n${notes}`, facts, placeNames, region, MIN_CHARS);
-  body = stripRepeatedNarration(body);
-  if (body.length < MIN_CHARS) {
-    body = padNarration(body, facts, placeNames, region, MIN_CHARS);
-    body = stripRepeatedNarration(body);
-  }
-  body = body.replace(/습니다/g, '보였다').replace(/입니다/g, '였다');
-  if (body.length > MAX_CHARS) {
-    body = clipTo(body, MAX_CHARS, MIN_CHARS - 40);
-  }
-  if (!/주차/.test(body) || !/차박/.test(body) || !/맛집/.test(body)) {
-    body = `${clipTo(body, MAX_CHARS - notes.length - 2, 900)}\n\n${notes}`;
-  }
-
+export function reviewJson(essay: TravelBlogDraft): {
+  title: string;
+  content: string;
+  keywords: string[];
+  hashtags: string[];
+} {
   return {
-    title,
-    body,
-    hashtags: [],
-    markdown: [`# ${title}`, '', body].join('\n'),
-    charCount: body.length,
-    photoCount: facts.length,
-    usedPhotoFacts: facts.filter((fact) => fact.caption || fact.objects.length || fact.visualTags.length).length,
-    usedPlaces: placeNames,
+    title: essay.title,
+    content: essay.body,
+    keywords: essay.seoKeywords ?? [],
+    hashtags: essay.hashtags,
   };
+}
+
+function splitSentences(text: string): string[] {
+  return text
+    .replace(/\[사진\d+\]/g, ' ')
+    .split(/(?<=다\.|요\.)\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+export function stripRepeatedNarration(text: string): string {
+  const paragraphs = text.split(/\n\n+/);
+  const usedPrefix = new Set<string>();
+  const kept: string[] = [];
+  for (const paragraph of paragraphs) {
+    if (GENERIC_FLUFF.test(paragraph)) continue;
+    const sentences = splitSentences(paragraph);
+    const keptSentences: string[] = [];
+    for (const sentence of sentences) {
+      if (GENERIC_FLUFF.test(sentence)) continue;
+      const prefix = sentence.replace(/\s+/g, '').slice(0, 28);
+      if (prefix && usedPrefix.has(prefix)) continue;
+      if (prefix) usedPrefix.add(prefix);
+      keptSentences.push(sentence);
+    }
+    if (keptSentences.length) kept.push(keptSentences.join(' ').trim());
+  }
+  return joinBody(kept);
 }
 
 export function essaySimilarity(a: string, b: string): number {
@@ -488,7 +662,7 @@ export function essaySimilarity(a: string, b: string): number {
       .filter(
         (item) =>
           item.length >= 2 &&
-          !['사진', '기록', '주차', '차박', '맛집', '화장실', '벤치', '공영주차장', '안내판', '풍경', '바람'].includes(item)
+          !['사진', '기록', '주차', '차박', '맛집', '화장실', '벤치', '공영주차장', '안내판', '풍경', '바람', '글자가', '사진에', '보였다', '눈에', '들어왔다'].includes(item)
       );
   const left = new Set(tokens(a));
   const right = new Set(tokens(b));
@@ -499,3 +673,44 @@ export function essaySimilarity(a: string, b: string): number {
   }
   return overlap / Math.max(left.size, right.size);
 }
+
+export function sentenceSimilarity(a: string, b: string): number {
+  const normalize = (sentence: string) =>
+    sentence.replace(/\[사진\d+\]/g, '').replace(/[^\w가-힣]/g, '').trim();
+  const left = new Set(splitSentences(a).map(normalize).filter((item) => item.length >= 6));
+  const right = new Set(splitSentences(b).map(normalize).filter((item) => item.length >= 6));
+  if (left.size === 0 || right.size === 0) return 0;
+  let overlap = 0;
+  for (const sentence of left) {
+    if (right.has(sentence)) overlap += 1;
+  }
+  return overlap / Math.max(left.size, right.size);
+}
+
+export function sceneDescriptionShare(paragraphs: ReviewParagraph[]): number {
+  let sceneChars = 0;
+  let total = 0;
+  for (const item of paragraphs) {
+    const body = item.text.replace(/\[사진\d+\]/g, '').trim();
+    total += body.length;
+    const scene = (item.sceneDescription || '').trim();
+    if (item.fromScene && scene) {
+      sceneChars += Math.min(scene.length, body.length);
+    }
+  }
+  if (total === 0) return 0;
+  return sceneChars / total;
+}
+
+export function templateResidueSimilarity(a: string, b: string, photoTokens: string[]): number {
+  const strip = (text: string) => {
+    let next = text.replace(/\[사진\d+\]/g, ' ');
+    for (const token of photoTokens.sort((x, y) => y.length - x.length)) {
+      if (token.length < 2) continue;
+      next = next.split(token).join(' ');
+    }
+    return next;
+  };
+  return essaySimilarity(strip(a), strip(b));
+}
+

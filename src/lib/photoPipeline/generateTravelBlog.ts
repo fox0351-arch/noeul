@@ -1,82 +1,9 @@
-import { generateGeminiJsonObject } from '@/lib/photoAi';
-import { markdownToHtml, proseCharCount, toMarkdownDraft } from '@/lib/blog/markdownHtml';
-import { compactPhotoFacts, enrichPhotoAnalyses, type TripBlogContext } from '@/lib/blog/photoFacts';
+import { markdownToHtml } from '@/lib/blog/markdownHtml';
+import { enrichPhotoAnalyses, photoFactsFromAnalyses, type TripBlogContext } from '@/lib/blog/photoFacts';
 import { inferTravelStory } from '@/lib/blog/travelStory';
-import { classifyVisualTags } from '@/lib/blog/visualTags';
-import { stripRepeatedNarration } from '@/lib/travelBlogEssay';
-import type { BlogDraft, BlogRecommendations, BlogSeo, PhotoAnalysis, TravelStory } from '@/types/blog';
+import { generateTravelBlogFromFacts, reviewJson } from '@/lib/travelBlogEssay';
+import type { BlogDraft, BlogRecommendations, PhotoAnalysis, TravelStory } from '@/types/blog';
 import type { GalmaetgilPlaceMatch } from '@/types/galmaetgilMatch';
-
-const MIN_CHARS = 1200;
-const MAX_CHARS = 1800;
-
-const BANNED_PHRASES = [
-  '우리는 서두르지 않았다',
-  '천천히 걸어도 괜찮은 길이었다',
-  '파도는 같은 자리를 밀려오지만',
-  '오늘의 동선이었다',
-  '풍경보다 사람이 더 기억에 남았다',
-  '방문했습니다',
-  '좋았습니다',
-  '추천합니다',
-  '유명합니다',
-  '관광지입니다',
-  '아름다운 관광지',
-];
-
-function asText(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function asStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is string => typeof item === 'string')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function clipProse(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= MAX_CHARS) return trimmed;
-  const sliced = trimmed.slice(0, MAX_CHARS);
-  const period = sliced.lastIndexOf('.');
-  const korean = sliced.lastIndexOf('다.');
-  const cut = Math.max(period, korean + 1);
-  return (cut > MIN_CHARS - 80 ? sliced.slice(0, cut + 1) : sliced).trim();
-}
-
-function containsBanned(text: string): boolean {
-  return BANNED_PHRASES.some((phrase) => text.includes(phrase));
-}
-
-function regionHint(photos: PhotoAnalysis[], trip?: TripBlogContext): string {
-  const fromAddress = trip?.places.find((place) => place.address)?.address || photos.find((photo) => photo.address)?.address || '';
-  const fromQuery = trip?.query || trip?.title || '';
-  return [fromQuery, fromAddress, photos[0]?.place || ''].filter(Boolean).join(' · ');
-}
-
-function sceneSentence(photo: PhotoAnalysis, place: string): string {
-  const tags = photo.visualTags?.length
-    ? photo.visualTags
-    : classifyVisualTags({
-        scene: photo.scene,
-        caption: photo.description,
-        subjects: photo.objects,
-        keywords: photo.keywords,
-        landmark: photo.landmark,
-      });
-  const object = photo.objects?.[0];
-  const caption = photo.description?.trim();
-  if (caption) return caption.endsWith('.') || caption.endsWith('다') ? caption : `${caption}.`;
-  if (tags.includes('인물') && object) return `${place}에서 ${object}가 눈에 들어왔다.`;
-  if (tags.includes('바다')) return `${place}의 물결이 발끝까지 밀려왔다.`;
-  if (tags.includes('산')) return `${place}의 능선이 눈에 들어왔다. 그늘 아래 잠시 머물렀다.`;
-  if (tags.includes('꽃')) return `${place} 가장자리에 꽃이 한 줄로 피어 있었다.`;
-  if (tags.includes('건물')) return `${place}의 건물이 낮게 자리를 지켰다.`;
-  if (tags.includes('길')) return `${place}로 이어진 길을 걸었다.`;
-  return `${place}의 장면이 눈에 들어왔다.`;
-}
 
 function photoSpotsFrom(photos: PhotoAnalysis[], place: string): string[] {
   const spots: string[] = [];
@@ -139,217 +66,33 @@ function buildRecommendations(photos: PhotoAnalysis[], trip?: TripBlogContext): 
   };
 }
 
-function formatPracticalNotes(rec: BlogRecommendations, parking: string): string {
-  const restaurants = rec.restaurants.slice(0, 3);
-  return [
-    `주차는 ${parking.replace(/^주차는\s*/, '')}`,
-    `차박은 ${rec.carCamping.replace(/^차박은\s*/, '')}`,
-    restaurants.length ? `맛집은 ${restaurants.join(', ')} 쪽으로 하루를 접었다.` : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
-function firstSentence(text: string): string {
-  const trimmed = text.trim();
-  const match = trimmed.match(/^.{8,80}?[.。!?]/);
-  return (match?.[0] || trimmed.slice(0, 60)).trim();
-}
-
-function joinBody(parts: string[]): string {
-  return parts.map((part) => part.trim()).filter(Boolean).join('\n\n');
-}
-
-function padProse(text: string, extras: string[], minLength = MIN_CHARS): string {
-  let body = text.trim();
-  for (const extra of extras) {
-    if (body.length >= minLength) break;
-    const line = extra.trim();
-    if (!line) continue;
-    if (body.includes(line.slice(0, 16))) continue;
-    body = `${body}\n\n${line}`;
-  }
-  return body;
-}
-
-function extrasFromPhotos(photos: PhotoAnalysis[], region: string): string[] {
-  const extras: string[] = [];
-  const seen = new Set<string>();
-  for (const photo of photos) {
-    const place = photo.place?.trim() || region;
-    const object = photo.objects.find((item) => item && !seen.has(item));
-    const tag = photo.visualTags?.find((item) => item && !seen.has(`tag:${item}`));
-    const keyword = photo.keywords.find((item) => item && item.length >= 2 && !seen.has(item));
-    if (object) {
-      seen.add(object);
-      extras.push(`${place}에서 ${object}가 한 컷으로 남았다.`);
-      continue;
-    }
-    if (tag) {
-      seen.add(`tag:${tag}`);
-      extras.push(`${photo.order}번째 사진은 ${tag} 쪽으로 시선을 끌었다.`);
-      continue;
-    }
-    if (keyword) {
-      seen.add(keyword);
-      extras.push(`${place}의 ${keyword}이 짧게 보였다.`);
-    }
-  }
-  return extras;
-}
-
-function assembleDraft(input: {
-  title: string;
-  summary?: string;
-  intro: string;
-  story: string;
-  places: string;
-  closing: string;
-  seo: BlogSeo;
-  recommendations: BlogRecommendations;
-  parking?: string;
-  photoExtras?: string[];
-}): BlogDraft {
-  let intro = input.intro.trim();
-  let storyText = input.story.trim();
-  let places = input.places.trim();
-  let closing = input.closing.trim();
-  const notes = formatPracticalNotes(input.recommendations, input.parking || fallbackAmenity().parking);
-  const extras = [
-    ...(input.photoExtras || []),
-    places ? `${places} 사이 풍경이 천천히 바뀌었다.` : '발걸음을 재촉하지 않아도 장면은 남았다.',
-    '벤치가 보이는 자리에서 숨을 고른 뒤, 다시 길이 이어졌다.',
-    '해가 기울어도 속도는 그대로였다. 걸었던 하루면 충분했다.',
-  ];
-  const storyMax = Math.max(700, MAX_CHARS - notes.length - 2);
-  const storyMin = Math.max(400, MIN_CHARS - notes.length - 2);
-  let storyBody = padProse(joinBody([intro, storyText, places, closing]), extras, storyMin);
-  storyBody = stripRepeatedNarration(storyBody);
-  if (storyBody.length < storyMin) {
-    storyBody = padProse(storyBody, extras, storyMin);
-    storyBody = stripRepeatedNarration(storyBody);
-  }
-  if (storyBody.length > storyMax) {
-    const sliced = storyBody.slice(0, storyMax);
-    const cut = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('다.') + 1);
-    storyBody = (cut > 400 ? sliced.slice(0, cut + 1) : sliced).trim();
-  }
-  const prose = clipProse(
-    stripRepeatedNarration(`${storyBody}\n\n${notes}`.trim().replace(/습니다/g, '보였다').replace(/입니다/g, '였다'))
-  );
-  const markdown = toMarkdownDraft({
-    title: input.title,
-    intro,
-    story: storyText,
-    places,
-    closing,
-    recommendations: notes,
-  });
-  return {
-    title: input.title,
-    summary: (input.summary || '').trim() || firstSentence(intro) || firstSentence(prose),
-    infoBox: notes,
-    intro,
-    story: storyText,
-    places,
-    closing,
-    body: prose,
-    markdown,
-    html: markdownToHtml(markdown),
-    seo: { keywords: [], hashtags: [], searchQueries: [] },
-    recommendations: input.recommendations,
-    charCount: proseCharCount([prose]),
-  };
-}
-
 export function fallbackTravelBlog(
   photos: PhotoAnalysis[],
   story: TravelStory,
   trip?: TripBlogContext
 ): BlogDraft {
   const analyzed = enrichPhotoAnalyses(photos);
-  const placeNames = trip?.places.map((place) => place.name) ?? story.route;
-  const mainPlace = placeNames[0] || analyzed[0]?.place || '여행지';
-  const region = regionHint(analyzed, trip);
-  const title = `${(trip?.title || trip?.query || mainPlace).trim()} 여행 후기`;
-  const summary = `${mainPlace} 사진 ${analyzed.length || 0}장의 순서를 따라 적은 기록.`;
-  const intro = `${region || mainPlace}의 여행은 ${mainPlace}에서 첫 장면을 골랐다. 그 자리가 눈에 들어왔다.`;
-  const walk = analyzed
-    .map((photo, index) => {
-      const name = photo.place || mainPlace;
-      const seen = sceneSentence(photo, name);
-      if (index === 0) return `${name}에서 하루가 열렸다. ${seen}`;
-      return seen.startsWith(name) ? seen : `${name}. ${seen}`;
-    })
-    .join('\n\n');
-  const storyText =
-    walk ||
-    `${mainPlace}를 걸으며 눈에 담긴 것만 남겼다. 같은 문장을 반복하지 않기 위해, 사진이 가리킨 대상만 적는다.`;
-  const named = (trip?.places.length ? trip.places.map((place) => place.name) : placeNames).filter(Boolean);
-  const placesText =
-    named.length > 1
-      ? `${named[0]}에서 ${named.at(-1)}까지 이름이 스쳤고, 걸음은 사진 순서를 따랐다.`
-      : named[0] || mainPlace;
-  const closing = `${mainPlace}의 마지막 사진은 ${analyzed.at(-1)?.visualTags?.[0] || analyzed.at(-1)?.objects?.[0] || '하늘'}에서 끝났다. 순서를 바꾸지 않은 채 머물렀다.`;
-  const amenity = fallbackAmenity(trip);
+  const facts = photoFactsFromAnalyses(analyzed);
+  const titleSeed = (trip?.title || trip?.query || facts[0]?.place || story.summary || '여행').trim();
+  const essay = generateTravelBlogFromFacts(facts, titleSeed);
   const rec = buildRecommendations(analyzed, trip);
-  rec.restaurants = amenity.restaurants;
-  rec.carCamping = amenity.carCamping;
-  return assembleDraft({
-    title,
-    summary,
-    intro,
-    story: storyText,
-    places: placesText || mainPlace,
-    closing,
-    seo: { keywords: [], hashtags: [], searchQueries: [] },
+  const published = reviewJson(essay);
+  const paras = essay.body.split(/\n\n+/);
+  return {
+    title: essay.title,
+    summary: paras[0] || '',
+    infoBox: '',
+    intro: paras[0] || '',
+    story: paras.slice(1, -1).join('\n\n'),
+    places: essay.usedPlaces.join(', '),
+    closing: paras.length > 1 ? paras[paras.length - 1] : '',
+    body: published.content,
+    markdown: essay.markdown,
+    html: markdownToHtml(essay.markdown),
+    seo: { keywords: published.keywords, hashtags: essay.hashtags ?? [], searchQueries: [] },
     recommendations: rec,
-    parking: amenity.parking,
-    photoExtras: extrasFromPhotos(analyzed, region),
-  });
-}
-
-function buildPrompt(photos: PhotoAnalysis[], story: TravelStory, trip?: TripBlogContext): string {
-  const facts = compactPhotoFacts(
-    photos.map((photo, index) => ({
-      order: photo.order ?? index + 1,
-      fileName: photo.fileName || `사진${index + 1}`,
-      place: photo.place,
-      address: photo.address || '',
-      scene: photo.scene || '',
-      caption: photo.description,
-      objects: photo.objects ?? [],
-      mood: photo.mood || '',
-      keywords: photo.keywords ?? [],
-      landmark: photo.landmark || '',
-      visualTags: photo.visualTags ?? [],
-    }))
-  );
-  return `너는 한국어 여행 다큐멘터리 나레이터다. 유튜브에 녹음하는 여행 영상 나레이션처럼 쓴다.
-존댓말 일기("~했습니다")를 쓰지 마라.
-금지 표현: 방문했습니다, 좋았습니다, 추천합니다, 유명합니다, 있습니다, 관광지입니다, 아름다운 관광지.
-해시태그, SEO, 광고, 핫플/인생샷/강추 금지.
-관광지 안내문처럼 쓰지 마라.
-
-필수 규칙:
-- 과거형 나레이션. 아래 동사를 장면에 맞게 섞어 쓴다: 보였다, 걸었다, 머물렀다, 이어졌다, 눈에 들어왔다.
-- 예: "수목원 길은 생각보다 길었다. 나무 사이로 흰 안개가 낮게 깔려 있었다."
-- 사진 배열 순서가 곧 이야기 순서다. story는 사진1→사진2 순으로 장면이 바뀐다. 분석 배열의 모든 사진을 빠짐없이 한 장면씩 쓴다.
-- 선택한 관광지 이름과 사진 분석(풍경, 장소 특징, 날씨, 시간대, 분위기, 색감, 사람 유무)을 함께 쓴다. 없는 풍경을 지어내지 마라.
-- 각 사진의 caption, objects, visualTags, scene, mood를 해당 문단에 반영한다.
-- 본문(intro+story+places+closing)은 1200~1800자.
-- 길이를 채우려고 같은 서술 패턴을 반복하지 마라. "스쳤다"는 글 전체에서 최대 한 번. 옷깃/어깨/등/귓가/팔목/무릎을 바꿔 가며 바람을 반복하지 마라.
-- 같은 문장 반복 금지. 금지 문장: ${BANNED_PHRASES.join(' / ')}
-- 이모지 금지.
-- 주차, 차박, 맛집 2~3곳은 존댓말 안내문이 아니라 여행자가 겪은 한 줄로 적는다. 예: "주차는 공영 자리에 차를 두고 조금 걸었다."
-
-여행 제목: ${trip?.title || story.summary || photos[0]?.place || '여행'}
-검색어/지역: ${trip?.query || ''}
-선택한 관광지: ${JSON.stringify(trip?.places ?? [])}
-촬영 순서 사진 분석: ${JSON.stringify(facts)}
-동선: ${JSON.stringify(story.route)}
-
-형식: {"title":"...","intro":"...","story":"...","places":"...","closing":"...","parking":"...","carCamping":"...","restaurants":["맛집1","맛집2","맛집3"]}`;
+    charCount: essay.charCount,
+  };
 }
 
 export async function generateTravelBlogDraft(
@@ -359,58 +102,30 @@ export async function generateTravelBlogDraft(
   story: TravelStory;
   draft: BlogDraft;
   fromGemini: boolean;
+  prompt: string;
 }> {
   const analyzed = enrichPhotoAnalyses(photos).slice(0, 50);
   const localStory = inferTravelStory(analyzed);
-  const fallback = fallbackTravelBlog(analyzed, localStory, options?.trip);
-  const improve = options?.improve?.trim()
-    ? `이전 초안 개선 요청:\n${options.improve}\n상투 문장을 제거하고, 사진 분석 내용을 더 구체적으로 반영하라.`
-    : '';
-  const json = await generateGeminiJsonObject({
-    prompt: `${buildPrompt(analyzed, localStory, options?.trip)}\n${improve}`,
-    maxOutputTokens: 4096,
-    temperature: 0.9,
-  });
-
-  if (!json || typeof json !== 'object') {
-    return { story: localStory, draft: fallback, fromGemini: false };
-  }
-
-  const record = json as Record<string, unknown>;
-  const routeFromModel = asStringList(record.route);
-  const story: TravelStory =
-    routeFromModel.length >= 1
-      ? { route: routeFromModel, summary: routeFromModel.join(' → ') }
-      : localStory;
-  const title = asText(record.title) || fallback.title;
-  const intro = asText(record.intro) || fallback.intro;
-  const storyText = asText(record.story);
-  const places = asText(record.places) || fallback.places;
-  const closing = asText(record.closing) || fallback.closing;
-  const combined = `${title}\n${intro}\n${storyText}\n${places}\n${closing}`;
-  const amenity = fallbackAmenity(options?.trip);
-  const restaurants = asStringList(record.restaurants).slice(0, 3);
-  const recommendations = buildRecommendations(analyzed, options?.trip);
-  if (restaurants.length >= 2) recommendations.restaurants = restaurants;
-  if (asText(record.carCamping)) recommendations.carCamping = asText(record.carCamping);
-
-  if (storyText.length < 200 || containsBanned(combined)) {
-    return { story, draft: fallback, fromGemini: false };
-  }
-
-  return {
-    story,
-    fromGemini: true,
-    draft: assembleDraft({
-      title,
-      intro,
-      story: storyText,
-      places,
-      closing,
-      seo: { keywords: [], hashtags: [], searchQueries: [] },
-      recommendations,
-      parking: asText(record.parking) || amenity.parking,
-      photoExtras: extrasFromPhotos(analyzed, regionHint(analyzed, options?.trip)),
-    }),
+  const facts = photoFactsFromAnalyses(analyzed);
+  const titleSeed = (options?.trip?.title || options?.trip?.query || facts[0]?.place || '여행').trim();
+  const essay = generateTravelBlogFromFacts(facts, titleSeed);
+  const rec = buildRecommendations(analyzed, options?.trip);
+  const published = reviewJson(essay);
+  const paras = essay.body.split(/\n\n+/);
+  const draft: BlogDraft = {
+    title: essay.title,
+    summary: paras[0] || '',
+    infoBox: '',
+    intro: paras[0] || '',
+    story: paras.slice(1, -1).join('\n\n'),
+    places: essay.usedPlaces.join(', '),
+    closing: paras.length > 1 ? paras[paras.length - 1] : '',
+    body: published.content,
+    markdown: essay.markdown,
+    html: markdownToHtml(essay.markdown),
+    seo: { keywords: published.keywords, hashtags: published.hashtags, searchQueries: [] },
+    recommendations: rec,
+    charCount: essay.charCount,
   };
+  return { story: localStory, draft, fromGemini: false, prompt: essay.prompt };
 }

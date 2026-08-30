@@ -23,6 +23,8 @@ export interface PlacePhoto {
   dataUrl: string;
   /** Google Drive에 저장된 원본 사진 파일 ID */
   driveFileId?: string;
+  /** EXIF DateTimeOriginal (압축 전에 읽음). 없으면 업로드 순서 */
+  takenAt?: string;
   /** AI가 추정한 장면과 본문용 한 문장 */
   analysis?: PhotoAiAnalysis;
 }
@@ -39,12 +41,25 @@ export type PhotoAiScene =
 export interface PhotoAiAnalysis {
   scene: PhotoAiScene;
   caption: string;
+  /** Vision 장면 설명. 후기 본문의 주 문장 */
+  sceneDescription?: string;
   subjects: string[];
   keywords: string[];
   confidence: number;
   landmark?: string;
-  /** 풍경·인물·바다·산·꽃·건물·길 등 글 생성에 쓰는 시각 태그 */
+  /** 사진에서 읽은 글자. 후기에서는 보조만 */
+  ocrText?: string[];
   visualTags?: string[];
+  hasPeople?: boolean;
+  peopleCount?: number;
+  ageEstimate?: string;
+  action?: string;
+  expression?: string;
+  weather?: string;
+  timeOfDay?: string;
+  landscapeType?: string;
+  colorTone?: string;
+  mood?: string;
 }
 
 export interface PlacesSearchResponse {

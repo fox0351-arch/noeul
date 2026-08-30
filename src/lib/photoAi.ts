@@ -13,9 +13,20 @@ const SCENES: PhotoAiScene[] = [
   'other',
 ];
 
+export function logBase64Payload(stage: string, mimeType: string, data: string) {
+  console.log(
+    `[base64-trace] ${stage} mimeType=${mimeType} dataLength=${data.length} head50=${data.slice(0, 50)} tail50=${data.slice(-50)}`
+  );
+}
+
 export function parseDataUrl(dataUrl: string): { mimeType: string; data: string } | null {
   const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
-  if (!match) return null;
+  if (!match) {
+    console.log(
+      `[base64-trace] parseDataUrl-fail dataUrlLength=${dataUrl.length} head50=${dataUrl.slice(0, 50)} tail50=${dataUrl.slice(-50)}`
+    );
+    return null;
+  }
   return { mimeType: match[1], data: match[2] };
 }
 
@@ -31,7 +42,7 @@ function cleanCaption(value: unknown): string {
     .replace(/[`"*]/g, '')
     .replace(/추천|강추|필수|최고|핫플|인생샷|꼭 가/g, '')
     .trim()
-    .slice(0, 200);
+    .slice(0, 400);
 }
 
 function asKeywords(value: unknown): string[] {
@@ -40,7 +51,23 @@ function asKeywords(value: unknown): string[] {
     .filter((item): item is string => typeof item === 'string')
     .map((item) => item.trim())
     .filter(Boolean)
-    .slice(0, 8);
+    .slice(0, 12);
+}
+
+function asTextList(value: unknown): string[] {
+  if (typeof value === 'string') {
+    return value
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter((item) => item.length >= 1)
+      .slice(0, 12);
+  }
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 12);
 }
 
 function asConfidence(value: unknown): number {
@@ -49,11 +76,85 @@ function asConfidence(value: unknown): number {
   return Math.max(0, Math.min(1, n));
 }
 
+export function isNounDumpCaption(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  if (/글자가 사진에 보였다|이 사진에 보였다|숫자가 눈에 들어왔다|이 눈에 들어왔다/.test(trimmed)) {
+    return true;
+  }
+  if (/이 보였다\.?$/.test(trimmed) && trimmed.split(/[,,]/).length >= 2) return true;
+  return false;
+}
+
+export function isSceneCaption(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 16 || isNounDumpCaption(trimmed)) return false;
+  return /다\.|있다|찍|걷|서 |앉아|웃|입|바라|들고|포옹|손|빛|눈 덮|흐리|맑/.test(trimmed);
+}
+
+function asPeopleCount(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.round(value));
+  if (typeof value === 'string') {
+    const n = parseInt(value.replace(/[^\d]/g, ''), 10);
+    if (Number.isFinite(n)) return Math.max(0, n);
+  }
+  return 0;
+}
+
+function asShort(value: unknown, max = 200): string {
+  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function asBool(value: unknown, fallback = false): boolean {
+  if (typeof value === 'boolean') return value;
+  if (value === 'true' || value === 1) return true;
+  if (value === 'false' || value === 0) return false;
+  return fallback;
+}
+
+export function composeSceneDescription(input: {
+  hasPeople: boolean;
+  peopleCount: number;
+  ageEstimate: string;
+  action: string;
+  expression: string;
+  weather: string;
+  timeOfDay: string;
+  landscapeType: string;
+  colorTone: string;
+  mood: string;
+  objects: string[];
+}): string {
+  const count = input.peopleCount;
+  const age = input.ageEstimate;
+  const who = input.hasPeople
+    ? count >= 2
+      ? `${age || '중년'} 부부`
+      : `${age || ''} 한 사람`.trim()
+    : '';
+  const action = input.action || (input.hasPeople ? '서 있다' : '');
+  const face = input.expression;
+  const place = input.objects.find((item) => /정상석|표지|바위|다리|바다|능선|해변|동상/.test(item)) || input.landscapeType;
+  const weather = input.weather;
+  const light = input.timeOfDay;
+  if (who && action) {
+    const smile = face ? `${face}며 ` : '';
+    const at = place ? `${place} 앞에서 ` : '';
+    return `${who}가 ${at}${smile}${action}`.replace(/\s+/g, ' ').trim() + '.';
+  }
+  const backdrop = [place, input.landscapeType, weather, light, input.mood, input.colorTone].filter(Boolean);
+  if (backdrop.length) {
+    return `${backdrop.slice(0, 4).join(', ')} 풍경이 한 장에 담겨 있다.`;
+  }
+  return '';
+}
+
 export function normalizeAnalysis(value: unknown): PhotoAiAnalysis | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as {
     scene?: unknown;
     caption?: unknown;
+    sceneDescription?: unknown;
     subjects?: unknown;
     keywords?: unknown;
     confidence?: unknown;
@@ -64,21 +165,36 @@ export function normalizeAnalysis(value: unknown): PhotoAiAnalysis | null {
     timeOfDay?: unknown;
     colorTone?: unknown;
     peopleCount?: unknown;
+    hasPeople?: unknown;
+    ageEstimate?: unknown;
+    action?: unknown;
+    expression?: unknown;
+    landscapeType?: unknown;
+    ocrText?: unknown;
+    ocr?: unknown;
+    objects?: unknown;
   };
-  const caption = cleanCaption(record.caption);
-  if (!caption) return null;
-  const subjects = Array.isArray(record.subjects)
-    ? record.subjects.filter((item): item is string => typeof item === 'string').slice(0, 6)
+  const ocrText = Array.from(new Set([...asTextList(record.ocrText), ...asTextList(record.ocr)])).slice(0, 12);
+  const objectTags = asTextList(record.objects);
+  const listedSubjects = Array.isArray(record.subjects)
+    ? record.subjects.filter((item): item is string => typeof item === 'string')
     : [];
-  const extras = [record.mood, record.weather, record.timeOfDay, record.colorTone]
-    .filter((item): item is string => typeof item === 'string')
-    .map((item) => item.trim().slice(0, 20))
-    .filter(Boolean);
-  if (typeof record.peopleCount === 'number') {
-    extras.push(record.peopleCount > 0 ? '사람있음' : '사람없음');
-  }
-  const keywords = Array.from(new Set([...asKeywords(record.keywords), ...extras])).slice(0, 8);
-  const landmark = typeof record.landmark === 'string' ? record.landmark.trim().slice(0, 40) : '';
+  const subjects = Array.from(new Set([...listedSubjects, ...objectTags])).slice(0, 12);
+  const peopleCount = asPeopleCount(record.peopleCount);
+  const hasPeople = asBool(record.hasPeople, peopleCount > 0);
+  const ageEstimate = asShort(record.ageEstimate, 40);
+  const action = asShort(record.action, 200);
+  const expression = asShort(record.expression, 80);
+  const weather = asShort(record.weather, 40);
+  const timeOfDay = asShort(record.timeOfDay, 40);
+  const landscapeType = asShort(record.landscapeType, 80);
+  const colorTone = asShort(record.colorTone, 80);
+  const mood = asShort(record.mood, 200);
+  const landmark = asShort(record.landmark, 80);
+  const sceneDescription = typeof record.sceneDescription === 'string' ? record.sceneDescription.trim() : '';
+  const extras = [mood, weather, timeOfDay, colorTone, ageEstimate, action, expression].filter(Boolean);
+  const keywords = Array.from(new Set([...asKeywords(record.keywords), ...extras])).slice(0, 12);
+  const caption = sceneDescription || (typeof record.caption === 'string' ? record.caption.trim() : '');
   const visualTags = classifyVisualTags({
     scene: asScene(record.scene),
     caption,
@@ -92,103 +208,197 @@ export function normalizeAnalysis(value: unknown): PhotoAiAnalysis | null {
   return {
     scene: asScene(record.scene),
     caption,
+    sceneDescription,
     subjects,
     keywords: keywords.length ? keywords : subjects.slice(0, 4),
     confidence: asConfidence(record.confidence),
-    visualTags: Array.from(new Set([...visualTags, ...extraTags])).slice(0, 6),
+    visualTags: Array.from(new Set([...visualTags, ...extraTags])).slice(0, 8),
+    hasPeople,
+    peopleCount,
+    ...(ageEstimate ? { ageEstimate } : {}),
+    ...(action ? { action } : {}),
+    ...(expression ? { expression } : {}),
+    ...(weather ? { weather } : {}),
+    ...(timeOfDay ? { timeOfDay } : {}),
+    ...(landscapeType ? { landscapeType } : {}),
+    ...(colorTone ? { colorTone } : {}),
+    ...(mood ? { mood } : {}),
     ...(landmark ? { landmark } : {}),
+    ...(ocrText.length ? { ocrText } : {}),
   };
 }
 
 export function analysisFromVisionLabels(
   labels: string[],
-  placeName: string
+  ocrText: string[] = [],
+  faces: { joy?: string }[] = []
 ): PhotoAiAnalysis | null {
-  const hay = `${labels.join(' ')} ${placeName}`.toLowerCase();
+  const ocr = ocrText.map((item) => item.trim()).filter(Boolean).slice(0, 12);
+  const hay = labels.join(' ').toLowerCase();
   const has = (pattern: RegExp) => pattern.test(hay);
+  const personLabels = labels.filter((item) => /person|people|human|man|woman|couple|사람|부부/i.test(item));
+  const peopleCount = Math.max(faces.length, personLabels.length ? 1 : 0);
+  const hasPeople = peopleCount > 0;
+  const subjects = labels.filter((item) => !/^text$/i.test(item)).slice(0, 8);
+  const landscapeType = has(/mountain|snow|산|설|능선/)
+    ? '설산'
+    : has(/beach|sea|ocean|바다/)
+      ? '바다'
+      : has(/sky|cloud|하늘/)
+        ? '하늘'
+        : subjects[0] || '';
+  const weather = has(/snow|눈|설/) ? '눈' : has(/rain|비/) ? '비' : has(/cloud|흐림/) ? '흐림' : '';
+  if (!subjects.length && !ocr.length && !faces.length) return null;
 
-  if (has(/sunrise|dawn|아침|일출/)) {
-    return { scene: 'sunrise', caption: '빛이 천천히 올라오는 동안 우리는 말없이 서 있었다.', subjects: labels.slice(0, 4), keywords: labels.slice(0, 4), confidence: 0.45 };
-  }
-  if (has(/sunset|dusk|evening sky|일몰|노을/)) {
-    return { scene: 'sunset', caption: '하늘이 붉게 잦아드는 것을 그냥 바라보았다.', subjects: labels.slice(0, 4), keywords: labels.slice(0, 4), confidence: 0.45 };
-  }
-  if (has(/lighthouse|등대/)) {
-    return { scene: 'place', caption: '붉은 등대가 바다 끝에 서 있었다.', subjects: labels.slice(0, 4), keywords: labels.slice(0, 4), confidence: 0.5 };
-  }
-  if (has(/clam|shellfish|barbecue|grill|seafood|조개|구이|food|dish|meal|cuisine|restaurant/)) {
-    return { scene: 'food', caption: '저녁은 식탁 앞에서 하루를 천천히 접었다.', subjects: labels.slice(0, 4), keywords: labels.slice(0, 4), confidence: 0.45 };
-  }
-  if (has(/van|camper|caravan|carnival|starex|캠핑카|차박|minivan/)) {
-    return { scene: 'camping', caption: '밤은 차 안에서 하늘을 가깝게 두고 보냈다.', subjects: labels.slice(0, 4), keywords: labels.slice(0, 4), confidence: 0.5 };
-  }
-  if (has(/beach|sea|ocean|coast|mountain|sky|landscape|바다|산|풍경/)) {
-    return { scene: 'landscape', caption: `${placeName || '그 자리'}의 풍경이 한 장에 남아 있었다.`, subjects: labels.slice(0, 4), keywords: labels.slice(0, 4), confidence: 0.4 };
-  }
-  if (labels[0]) {
-    return {
-      scene: 'place',
-      caption: `${placeName || '그 자리'}의 모습이 사진 한 장에 남아 있었다.`,
-      subjects: labels.slice(0, 4),
-      keywords: labels.slice(0, 4),
-      confidence: 0.35,
-    };
-  }
-  return null;
+  const scene: PhotoAiScene = has(/sunrise|dawn|아침|일출/)
+    ? 'sunrise'
+    : has(/sunset|dusk|일몰|노을/)
+      ? 'sunset'
+      : has(/food|dish|meal|조개|구이|restaurant/)
+        ? 'food'
+        : has(/van|camper|차박/)
+          ? 'camping'
+          : has(/beach|sea|ocean|mountain|landscape|바다|산|눈|설/)
+            ? 'landscape'
+            : 'place';
+
+  return {
+    scene,
+    caption: '',
+    sceneDescription: '',
+    subjects,
+    keywords: [weather, landscapeType].filter(Boolean).slice(0, 8),
+    confidence: hasPeople ? 0.55 : 0.4,
+    visualTags: [],
+    hasPeople,
+    peopleCount,
+    ...(weather ? { weather } : {}),
+    ...(landscapeType ? { landscapeType } : {}),
+    ...(ocr.length ? { ocrText: ocr } : {}),
+  };
+}
+
+export type PhotoAiOutcome = {
+  analysis: PhotoAiAnalysis | null;
+  notes: string[];
+  success: boolean;
+  status: number | null;
+  error: string;
+  cause: string;
+  keyPresent: boolean;
+  keySource: 'GEMINI_API_KEY' | 'GOOGLE_PLACES_API_KEY' | 'none';
+};
+
+export function classifyGeminiCause(status: number | null, body: string): string {
+  const text = (body || '').toLowerCase();
+  if (!status && /missing|없/.test(text)) return 'missing key';
+  if (status === 429 || /quota|resource_exhausted/.test(text)) return '429 quota exceeded';
+  if (status === 400 && /api[_ ]?key|invalid|api_key_invalid/.test(text)) return 'invalid key';
+  if (status === 403 && /location|region|failed_precondition|not supported/.test(text)) return 'region restriction';
+  if (status === 403) return '403 forbidden';
+  if (status === 404) return '404 model not found';
+  if (status === 408 || /abort/.test(text)) return 'timeout/aborted';
+  if (status && status >= 500) return `HTTP ${status}`;
+  if (status && status >= 400) return `HTTP ${status}`;
+  return 'success';
 }
 
 export async function analyzePhotoWithAi(input: {
   dataUrl: string;
   placeName: string;
   placeMemo?: string;
-}): Promise<{ analysis: PhotoAiAnalysis | null; notes: string[] }> {
+}): Promise<PhotoAiOutcome> {
   const parsed = parseDataUrl(input.dataUrl);
   const notes: string[] = [];
-  if (!parsed) return { analysis: null, notes: ['invalid-data-url'] };
-
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey) {
-    const fromGemini = await analyzeWithGemini(geminiKey, parsed, input.placeName, input.placeMemo, notes);
-    if (fromGemini.analysis) return { analysis: fromGemini.analysis, notes };
-    return { analysis: null, notes };
+  if (parsed) {
+    logBase64Payload('analyzePhotoWithAi.parseDataUrl', parsed.mimeType, parsed.data);
+  }
+  const geminiKey = process.env.GEMINI_API_KEY?.trim() || '';
+  const placesKey = process.env.GOOGLE_PLACES_API_KEY?.trim() || '';
+  const keyPresent = Boolean(geminiKey);
+  const keySource = geminiKey ? 'GEMINI_API_KEY' : placesKey ? 'GOOGLE_PLACES_API_KEY' : 'none';
+  if (!parsed) {
+    return {
+      analysis: null,
+      notes: ['invalid-data-url'],
+      success: false,
+      status: null,
+      error: 'invalid-data-url',
+      cause: 'invalid-data-url',
+      keyPresent,
+      keySource,
+    };
   }
 
-  const placesKey = process.env.GOOGLE_PLACES_API_KEY;
-  if (!placesKey) return { analysis: null, notes: ['missing-api-key'] };
+  const key = geminiKey || placesKey;
+  if (!key) {
+    console.log('[노을-photoAi.ts] analyzePhotoWithAi 실패', { notes: ['missing-api-key'] });
+    return {
+      analysis: null,
+      notes: ['missing-api-key'],
+      success: false,
+      status: null,
+      error: 'GEMINI_API_KEY missing',
+      cause: 'missing key',
+      keyPresent: false,
+      keySource: 'none',
+    };
+  }
 
-  const fromGemini = await analyzeWithGemini(placesKey, parsed, input.placeName, input.placeMemo, notes);
-  if (fromGemini.analysis) return { analysis: fromGemini.analysis, notes };
-
-  const fromVision = await analyzeWithVision(placesKey, parsed.data, input.placeName, notes);
-  return { analysis: fromVision, notes };
+  const fromGemini = await analyzeWithGemini(key, parsed, input.placeName, input.placeMemo, notes);
+  let analysis = fromGemini.analysis;
+  if (!analysis && placesKey) {
+    analysis = await analyzeWithVision(placesKey, parsed.data, notes);
+    notes.push('vision-fallback');
+  }
+  const success = Boolean(analysis?.sceneDescription || analysis?.caption);
+  const cause = success
+    ? 'success'
+    : classifyGeminiCause(fromGemini.status, fromGemini.error || notes.join(' '));
+  console.log('[노을-photoAi.ts] 원본 분석', JSON.stringify(analysis));
+  console.log('[TRACE-0b] src/lib/photoAi.ts:294 analyzePhotoWithAi.sceneDescription', analysis?.sceneDescription ?? null);
+  console.log('[gemini-photo]', {
+    success,
+    status: fromGemini.status,
+    cause,
+    keyPresent,
+    keySource,
+    error: (fromGemini.error || '').slice(0, 240),
+  });
+  return {
+    analysis: analysis ?? null,
+    notes,
+    success,
+    status: fromGemini.status,
+    error: fromGemini.error,
+    cause,
+    keyPresent,
+    keySource,
+  };
 }
 
 async function analyzeWithGemini(
   apiKey: string,
   parsed: { mimeType: string; data: string },
-  placeName: string,
-  placeMemo: string | undefined,
+  _placeName: string,
+  _placeMemo: string | undefined,
   notes: string[]
-): Promise<{ analysis: PhotoAiAnalysis | null; raw: unknown }> {
-  const prompt = `너는 여행 사진 분석기다. 사진에서 보이는 것만 추정해 JSON만 출력하라.
-광고, 추천, 과장 문구 금지.
-caption은 한국어 한 문장, 과거형 나레이션. 이 사진에만 있는 풍경·장소 특징·날씨·시간대·분위기·색감·사람 유무를 구체적으로 넣는다.
-예: "전나무 사이로 흰 안개가 낮게 깔려 있었고, 멀리 능선만 흐렸다."
-"스쳤다" 같은 상투 동사와 옷깃/어깨/등/귓가/팔목/무릎 반복은 쓰지 마라.
-scene은 landscape, place, food, sunrise, sunset, camping, other 중 하나.
-visualTags는 해당하는 것만: 풍경, 인물, 바다, 산, 꽃, 건물, 길.
-peopleCount는 보이는 사람 수(숫자). 없으면 0.
-weather는 맑음/흐림/비/눈 중 보이는 것만.
-timeOfDay는 새벽/아침/낮/오후/해질녘/밤 중 보이는 것만.
-colorTone은 짧은 색감(예: 푸른빛, 노란 모래).
-mood는 짧은 분위기.
-keywords에 weather, timeOfDay, colorTone, 사람있음/사람없음을 함께 넣는다.
-장소 힌트: ${placeName}
-메모 힌트: ${placeMemo || '없음'}
-형식: {"scene":"place","caption":"...","subjects":["태극기"],"keywords":["흐림","오후","푸른빛","사람없음"],"confidence":0.7,"landmark":"국회의사당","visualTags":["건물","인물"],"placeName":"국회의사당","peopleCount":2,"mood":"차분함","weather":"맑음","timeOfDay":"오후","colorTone":"흰 돌","estimatedLocation":"서울 여의도","objects":["국회의사당"],"tags":["#국회의사당"],"blogKeywords":["국회의사당"]}`;
+): Promise<{ analysis: PhotoAiAnalysis | null; raw: unknown; status: number | null; error: string }> {
+  const prompt = `너는 사진을 보고 장면을 설명하는 관찰자다. JSON만 출력하라. 검색 장소 이름은 무시하라.
+1순위는 OCR이 아니라 눈에 보이는 장면이다.
+반드시 적을 것: 사람 여부, 인원, 나이대, 옷/행동, 표정, 날씨, 시간대, 풍경 종류, 색감, 분위기.
+sceneDescription은 사람이 후기에 쓸 문장이다. 명사를 나열하지 마라.
+
+좋은 예: "등산복을 입은 중년 부부가 정상석 앞에서 웃으며 사진을 찍고 있다."
+나쁜 예: "함백산 정상석이 보였다.", "표지판, 능선, 눈이 사진에 보였다."
+
+ocrText는 읽힌 글자만 넣고, 장면 문장의 주인공으로 쓰지 마라. 숫자는 보조다.
+형식: {"sceneDescription":"등산복을 입은 중년 부부가 정상석 앞에서 웃으며 사진을 찍고 있다.","hasPeople":true,"peopleCount":2,"ageEstimate":"중년","action":"사진을 찍고 있다","expression":"웃고","weather":"눈","timeOfDay":"낮","landscapeType":"설산","colorTone":"흰빛","mood":"함께한 겨울 산행","scene":"landscape","objects":["정상석","등산복"],"ocrText":["1572.9m"],"confidence":0.8}`;
 
   const models = await listGeminiModels(apiKey, notes);
   const versions = ['v1beta', 'v1'] as const;
+  let lastStatus: number | null = null;
+  let lastError = '';
 
   for (const model of models) {
     for (const version of versions) {
@@ -201,12 +411,17 @@ keywords에 weather, timeOfDay, colorTone, 사람있음/사람없음을 함께 �
         parsed,
       });
       if (first.ok === false) {
+        lastStatus = first.status;
+        lastError = first.error || `HTTP ${first.status}`;
         notes.push(`${version}/${model}:${first.status}`);
         logGeminiFailure(first.status, first.error || `HTTP ${first.status}`);
+        // 404/408만 다음 모델·버전으로 넘어감. 429는 같은 모델의 v1만 시도하지 않고 break (429 전용 backoff/retry 없음).
         if (first.status === 404 || first.status === 408) continue;
         break;
       }
-      if (first.analysis || first.raw) return { analysis: first.analysis, raw: first.raw ?? null };
+      if (first.analysis || first.raw) {
+        return { analysis: first.analysis, raw: first.raw ?? null, status: 200, error: '' };
+      }
       notes.push(`${version}/${model}:${first.note}`);
 
       const second = await requestGeminiAnalysis({
@@ -218,17 +433,21 @@ keywords에 weather, timeOfDay, colorTone, 사람있음/사람없음을 함께 �
         parsed,
       });
       if (second.ok === false) {
+        lastStatus = second.status;
+        lastError = second.error || `HTTP ${second.status}`;
         notes.push(`${version}/${model}:json:${second.status}`);
         logGeminiFailure(second.status, second.error || `HTTP ${second.status}`);
         break;
       }
-      if (second.analysis || second.raw) return { analysis: second.analysis, raw: second.raw ?? null };
+      if (second.analysis || second.raw) {
+        return { analysis: second.analysis, raw: second.raw ?? null, status: 200, error: '' };
+      }
       notes.push(`${version}/${model}:json:${second.note}`);
       break;
     }
   }
 
-  return { analysis: null, raw: null };
+  return { analysis: null, raw: null, status: lastStatus, error: lastError };
 }
 
 async function fetchGemini(url: string, init?: RequestInit, timeoutMs = 20000): Promise<Response> {
@@ -242,8 +461,14 @@ async function fetchGemini(url: string, init?: RequestInit, timeoutMs = 20000): 
 }
 
 function logGeminiResponse(httpStatus: number, responseText: string) {
+  const cause = classifyGeminiCause(httpStatus, responseText);
+  console.log('[gemini] 호출 직후', {
+    httpStatus,
+    cause,
+    body: responseText.slice(0, 800),
+  });
   console.log('Gemini Response:', responseText.slice(0, 400));
-  if (httpStatus !== 403) return;
+  if (httpStatus !== 403 && httpStatus !== 429 && httpStatus !== 400) return;
   try {
     const json = JSON.parse(responseText) as {
       error?: { status?: unknown; message?: unknown; details?: unknown };
@@ -254,7 +479,7 @@ function logGeminiResponse(httpStatus: number, responseText: string) {
     console.log('error.details:', error.details);
   } catch {
     console.log('error.status:', httpStatus);
-    console.log('error.message:', responseText);
+    console.log('error.message:', responseText.slice(0, 400));
     console.log('error.details:', undefined);
   }
 }
@@ -372,7 +597,11 @@ export async function generateGeminiJsonObject(input: {
   parsed?: { mimeType: string; data: string };
   maxOutputTokens?: number;
   temperature?: number;
+  logFullPrompt?: boolean;
 }): Promise<unknown | null> {
+  if (input.logFullPrompt) {
+    console.log('[노을-review] LLM 호출 직전 프롬프트 전문\n' + input.prompt);
+  }
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) return null;
   const notes: string[] = [];
@@ -437,22 +666,26 @@ async function requestGeminiAnalysis(input: {
     };
     if (input.asJson) generationConfig.responseMimeType = 'application/json';
 
+    const inlineData = { mimeType: input.parsed.mimeType, data: input.parsed.data };
+    logBase64Payload('generateContent.inline_data.data', inlineData.mimeType, inlineData.data);
+    const requestBody = {
+      contents: [
+        {
+          parts: [{ text: input.prompt }, { inlineData }],
+        },
+      ],
+      generationConfig,
+    };
+    console.log(
+      `[base64-trace] generateContent request body model=${input.model} version=${input.version} promptLength=${input.prompt.length} mimeType=${inlineData.mimeType} dataLength=${inlineData.data.length} head50=${inlineData.data.slice(0, 50)} tail50=${inlineData.data.slice(-50)}`
+    );
+
     const response = await fetchGemini(
       `https://generativelanguage.googleapis.com/${input.version}/models/${input.model}:generateContent?key=${input.apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: input.prompt },
-                { inlineData: { mimeType: input.parsed.mimeType, data: input.parsed.data } },
-              ],
-            },
-          ],
-          generationConfig,
-        }),
+        body: JSON.stringify(requestBody),
       },
       45000
     );
@@ -484,6 +717,15 @@ async function requestGeminiAnalysis(input: {
     try {
       const raw = JSON.parse(jsonMatch[0]) as unknown;
       const analysis = normalizeAnalysis(raw);
+      const rawScene =
+        raw && typeof raw === 'object' && 'sceneDescription' in raw
+          ? (raw as { sceneDescription?: unknown }).sceneDescription
+          : undefined;
+      console.log('[TRACE-0] src/lib/photoAi.ts:615 requestGeminiAnalysis', {
+        rawSceneDescription: rawScene,
+        normalizedSceneDescription: analysis?.sceneDescription ?? null,
+        same: rawScene === (analysis?.sceneDescription ?? ''),
+      });
       if (analysis || raw) return { ok: true, analysis, raw, note: analysis ? 'ok' : 'parse' };
       return { ok: true, analysis: null, raw, note: 'parse' };
     } catch {
@@ -498,7 +740,6 @@ async function requestGeminiAnalysis(input: {
 async function analyzeWithVision(
   apiKey: string,
   data: string,
-  placeName: string,
   notes: string[]
 ): Promise<PhotoAiAnalysis | null> {
   try {
@@ -510,8 +751,10 @@ async function analyzeWithVision(
           {
             image: { content: data },
             features: [
-              { type: 'LABEL_DETECTION', maxResults: 8 },
+              { type: 'LABEL_DETECTION', maxResults: 12 },
               { type: 'LANDMARK_DETECTION', maxResults: 3 },
+              { type: 'FACE_DETECTION', maxResults: 8 },
+              { type: 'TEXT_DETECTION', maxResults: 15 },
               { type: 'WEB_DETECTION', maxResults: 5 },
             ],
           },
@@ -526,7 +769,10 @@ async function analyzeWithVision(
       responses?: {
         labelAnnotations?: { description?: string }[];
         landmarkAnnotations?: { description?: string }[];
+        faceAnnotations?: { joyLikelihood?: string }[];
         webDetection?: { webEntities?: { description?: string }[] };
+        textAnnotations?: { description?: string }[];
+        fullTextAnnotation?: { text?: string };
       }[];
     };
     const first = payload.responses?.[0];
@@ -535,9 +781,17 @@ async function analyzeWithVision(
       ...(first?.labelAnnotations ?? []).map((item) => item.description || ''),
       ...(first?.webDetection?.webEntities ?? []).map((item) => item.description || ''),
     ].filter(Boolean);
-    return analysisFromVisionLabels(labels, placeName);
+    const faces = (first?.faceAnnotations ?? []).map((face) => ({ joy: face.joyLikelihood || '' }));
+    const rawOcr = first?.fullTextAnnotation?.text || first?.textAnnotations?.[0]?.description || '';
+    const ocrText = rawOcr
+      .split(/\s+/)
+      .map((item) => item.trim())
+      .filter((item) => item.length >= 2)
+      .slice(0, 12);
+    return analysisFromVisionLabels(labels, ocrText, faces);
   } catch {
     notes.push('vision:error');
     return null;
   }
 }
+

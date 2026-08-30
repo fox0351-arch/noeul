@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { PlaceDetails, PlaceItem, PlaceLocation, PlacePhoto, PlacesSearchResponse } from '@/types/place';
+import { PlaceDetails, PlaceItem, PlaceLocation, PlacePhoto, PhotoAiAnalysis, PlacesSearchResponse } from '@/types/place';
 import {
   clonePlaces,
   createTravelMapId,
@@ -12,8 +12,8 @@ import {
 } from '@/lib/travelMapStorage';
 import { filesToPlacePhotos, isQuotaExceeded, MAX_PHOTOS_PER_PLACE } from '@/lib/placePhotos';
 import { analyzePlacePhotos } from '@/lib/photoAiClient';
-import { essaySimilarity, generateTravelBlogEssay, reviewMeetsRules, TravelBlogDraft } from '@/lib/travelBlogEssay';
-import { photoAnalysesFromPlaces } from '@/lib/blog/photoFacts';
+import { photoFactsFromPlaces } from '@/lib/blog/photoFacts';
+import { generateTravelBlogEssay } from '@/lib/travelBlogEssay';
 import { readSearchSession, writeSearchSession } from '@/lib/searchSessionStorage';
 import { TravelMap } from '@/types/travelMap';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
@@ -41,41 +41,121 @@ function applyTripPhotos(places: PlaceItem[], checkedIds: string[], photos: Plac
   }));
 }
 
-async function requestTravelReview(
-  places: PlaceItem[],
-  trip: { title: string; query: string }
-) {
-  const photos = photoAnalysesFromPlaces(places).map((photo, index) => {
-    const target = places[Math.min(index, Math.max(places.length - 1, 0))];
-    return {
-      ...photo,
-      place: target?.name || photo.place,
-      address: target?.address || photo.address,
-      order: index + 1,
+function factsLogRows(facts: ReturnType<typeof photoFactsFromPlaces>) {
+  return facts.map((fact) => ({
+    sceneDescription: fact.sceneDescription,
+    mood: fact.mood,
+    objects: (fact.objects ?? []).join(', '),
+    ocrText: (fact.ocrText ?? []).join(', '),
+  }));
+}
+
+function logFactsTable(stage: string, facts: ReturnType<typeof photoFactsFromPlaces>, photoResultsLength?: number) {
+  const rows = factsLogRows(facts);
+  const success = facts.filter((fact) => (fact.sceneDescription || fact.caption).trim()).length;
+  const fail = facts.length - success;
+  console.log(`[facts] ${stage} facts.length=`, facts.length);
+  if (photoResultsLength != null) console.log(`[facts] ${stage} photoResults.length=`, photoResultsLength);
+  console.log(`[facts] ${stage} 성공 사진 수=`, success, '실패 사진 수=', fail);
+  console.table(rows);
+  if (typeof window !== 'undefined') {
+    const w = window as Window & {
+      __NOEUL_FACTS?: Record<string, unknown>;
     };
-  });
-  const response = await fetch('/api/photos/travel-blog', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      photos,
-      trip: {
-        title: trip.title,
-        query: trip.query,
-        places: places.map((place) => ({
-          name: place.name,
-          address: place.address,
-          types: place.types,
-        })),
+    w.__NOEUL_FACTS = {
+      ...(w.__NOEUL_FACTS || {}),
+      [stage]: {
+        'facts.length': facts.length,
+        'photoResults.length': photoResultsLength ?? null,
+        성공: success,
+        실패: fail,
+        rows,
       },
-    }),
+    };
+  }
+}
+
+function dumpField(value: unknown): string {
+  if (value === undefined || value === null || value === '') return '(없음)';
+  if (Array.isArray(value)) return value.length ? value.join(', ') : '(없음)';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  return String(value);
+}
+
+function dumpPeople(analysis?: PhotoAiAnalysis): string {
+  if (!analysis) return '(없음)';
+  return [
+    `hasPeople=${dumpField(analysis.hasPeople)}`,
+    `peopleCount=${dumpField(analysis.peopleCount)}`,
+    `ageEstimate=${dumpField(analysis.ageEstimate)}`,
+  ].join(', ');
+}
+
+function slimForLog(value: unknown): unknown {
+  if (value == null) return null;
+  return JSON.parse(
+    JSON.stringify(value, (key, item) =>
+      key === 'dataUrl' && typeof item === 'string' ? `[dataUrl ${item.length}]` : item
+    )
+  );
+}
+
+let lastTraceScenes: Array<string | null> = [];
+
+function formatPublishedReview(essay: ReturnType<typeof generateTravelBlogEssay>): string {
+  const json = JSON.stringify(
+    {
+      title: essay.title,
+      content: essay.body,
+      keywords: essay.seoKeywords ?? [],
+      hashtags: essay.hashtags,
+    },
+    null,
+    2
+  );
+  console.log('[LENGTH] formatPublishedReview', {
+    file: 'src/app/page.tsx',
+    fn: 'formatPublishedReview',
+    contentLength: essay.body.length,
+    jsonLength: json.length,
+    title: essay.title,
   });
-  const body = (await response.json()) as {
-    draft?: { title?: string; body?: string; markdown?: string; charCount?: number };
-    error?: string;
-  };
-  if (!response.ok) throw new Error(body.error || '여행 후기를 만들지 못했습니다.');
-  return body;
+  return json;
+}
+
+function formatPhotoAiDump(photos: PlacePhoto[]): string {
+  lastTraceScenes = photos.map((photo) => photo.analysis?.sceneDescription ?? null);
+  console.log('[TRACE-1] src/app/page.tsx:59 formatPhotoAiDump photo.analysis.sceneDescription', lastTraceScenes);
+  return photos
+    .map((photo, index) => {
+      const analysis = photo.analysis;
+      return [
+        `[사진${index + 1}]`,
+        'sceneDescription:',
+        analysis?.sceneDescription ? analysis.sceneDescription : '(없음)',
+        'people:',
+        dumpPeople(analysis),
+        'action:',
+        dumpField(analysis?.action),
+        'mood:',
+        dumpField(analysis?.mood),
+        'objects:',
+        dumpField(analysis?.subjects),
+        'ocrText:',
+        dumpField(analysis?.ocrText),
+        '--------------------------------',
+      ].join('\n');
+    })
+    .join('\n');
+}
+
+function sortTripPhotos(photos: PlacePhoto[]): PlacePhoto[] {
+  return [...photos].sort((a, b) => {
+    if (a.takenAt && b.takenAt && a.takenAt !== b.takenAt) return a.takenAt.localeCompare(b.takenAt);
+    if (a.takenAt && !b.takenAt) return -1;
+    if (!a.takenAt && b.takenAt) return 1;
+    return 0;
+  });
 }
 
 export default function HomePage() {
@@ -104,9 +184,9 @@ export default function HomePage() {
   const [isPhotoBusy, setIsPhotoBusy] = useState(false);
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [isReviewGenerating, setIsReviewGenerating] = useState(false);
-  const [reviewDraft, setReviewDraft] = useState<TravelBlogDraft | null>(null);
+  const [reviewDump, setReviewDump] = useState<string | null>(null);
   const [reviewCopyNotice, setReviewCopyNotice] = useState('');
-  const [lastReviewFingerprint, setLastReviewFingerprint] = useState('');
+  const [traceCompare, setTraceCompare] = useState('');
   const photoInputRef = useRef<HTMLInputElement>(null);
   const sessionReadyRef = useRef(false);
   const placesRef = useRef<PlaceItem[]>([]);
@@ -114,7 +194,6 @@ export default function HomePage() {
   const { installed, hint: installHint, install: installApp } = usePwaInstall();
 
   const selectedPlaces = places.filter((place) => checkedIds.includes(place.id));
-  const tripTitle = currentQuery.trim() || keyword.trim() || '여행';
 
   const persistSession = (
     nextPlaces: PlaceItem[],
@@ -322,7 +401,7 @@ export default function HomePage() {
       setSelectedPlaceId(null);
       setLoadedMapId(null);
       setSelectedSavedMapId(null);
-      setReviewDraft(null);
+      setReviewDump(null);
       persistSession(nextPlaces, nextChecked, [], data.query, keyword.trim(), nextCenter, null, null);
       setMapNotice(`추천 관광지 ${nextPlaces.length}곳입니다. 갈 곳을 고르세요.`);
     } catch (err: unknown) {
@@ -415,6 +494,13 @@ export default function HomePage() {
       setTripPhotos(nextPhotos);
       persistTrip(places, checkedIds, nextPhotos);
       setMapNotice(`사진 ${nextPhotos.length}장을 올렸습니다.`);
+      const uploadedPhotos = added;
+      const photos = nextPhotos;
+      const photoResults = nextPhotos.filter((photo) => photo.analysis);
+      console.log('uploadedPhotos.length', uploadedPhotos.length);
+      console.log('photos.length', photos.length);
+      console.log('photoResults.length', photoResults.length);
+      console.log('reviewDump', reviewDump);
     } finally {
       setIsPhotoBusy(false);
     }
@@ -441,7 +527,7 @@ export default function HomePage() {
     setCurrentQuery(nextQuery);
     setKeyword(nextQuery);
     setSelectedPlaceId(null);
-    setReviewDraft(null);
+    setReviewDump(null);
     setMapError('');
     persistSession(snapshot, nextChecked, nextPhotos, nextQuery, nextQuery, nextCenter, map.id, null);
     setMapNotice(`'${map.title}'을 불러왔습니다. 장소 ${snapshot.length}곳.`);
@@ -455,77 +541,136 @@ export default function HomePage() {
     if (!window.confirm(`'${map.title}'을 삭제할까요?`)) return;
     const remaining = deleteTravelMap(map.id);
     setTravelMaps(remaining);
+    const isCurrent =
+      loadedMapId === map.id ||
+      selectedSavedMapId === map.id ||
+      currentQuery === map.title ||
+      currentQuery === (map.sourceQuery || '') ||
+      keyword === map.title ||
+      keyword === (map.sourceQuery || '');
     setSelectedSavedMapId((current) => (current === map.id ? null : current));
     if (loadedMapId === map.id) setLoadedMapId(null);
-    setMapNotice(`'${map.title}'을 삭제했습니다.`);
+    if (isCurrent) {
+      setPlaces([]);
+      setCheckedIds([]);
+      setTripPhotos([]);
+      setKeyword('');
+      setCurrentQuery('');
+      setSelectedPlaceId(null);
+      setDetailPlace(null);
+      setDetails(null);
+      setDetailsError('');
+      setErrorMsg('');
+      setLoadedMapId(null);
+      persistSession([], [], [], '', '', SEOUL, null, null);
+      MapManager.getInstance().setPlaces([]);
+    }
+    setMapNotice('삭제했습니다.');
   };
 
   const handleGenerateReview = async () => {
+    console.log('DEBUG-12345');
+    console.log('DEBUG-12345 fn=handleGenerateReview');
+    console.log('DEBUG-12345 file=C:\\Users\\PC2512\\Desktop\\noeul\\src\\app\\page.tsx');
     if (selectedPlaces.length === 0) {
       setMapError('갈 관광지를 먼저 골라 주세요.');
       return;
     }
     setMapError('');
     setReviewCopyNotice('');
+    setReviewDump(null);
     setIsReviewGenerating(true);
     setIsReviewOpen(true);
-    const prepared = applyTripPhotos(selectedPlaces, checkedIds, tripPhotos);
+    const prepared = applyTripPhotos(selectedPlaces, checkedIds, sortTripPhotos(tripPhotos));
+    console.log('tripPhotos.length', tripPhotos.length);
+    console.log('prepared.length', prepared.length);
+    console.log('prepared[0]', JSON.stringify(slimForLog(prepared[0])));
     try {
-      const analyzed = await analyzePlacePhotos(prepared);
-      persistTrip(places, checkedIds, collectTripPhotos(analyzed));
-      const trip = { title: tripTitle, query: currentQuery };
-      let draft = generateTravelBlogEssay({
-        title: trip.title,
+      const preparedPhotos = collectTripPhotos(prepared);
+      const factsReady =
+        preparedPhotos.length > 0 &&
+        preparedPhotos.every((photo) => (photo.analysis?.sceneDescription || photo.analysis?.caption || '').trim());
+      const analyzed = factsReady ? prepared : await analyzePlacePhotos(prepared, { force: true });
+      const collectedPhotos = collectTripPhotos(analyzed);
+      const photos = sortTripPhotos(collectedPhotos);
+      const photoResults = photos.filter((photo) => photo.analysis);
+      logFactsTable('analyzePlacePhotos 직후', photoFactsFromPlaces(analyzed), photoResults.length);
+      console.log('analyzed.length', analyzed.length);
+      console.log('analyzed[0]', JSON.stringify(slimForLog(analyzed[0])));
+      console.log('collectTripPhotos(analyzed).length', collectedPhotos.length);
+      console.log('collectTripPhotos(analyzed)[0]', JSON.stringify(slimForLog(collectedPhotos[0])));
+      persistTrip(places, checkedIds, photos);
+      setTripPhotos(photos);
+      const essay = generateTravelBlogEssay({
+        title: currentQuery.trim() || keyword.trim() || '여행',
         memo: '',
         checklist: [],
         places: analyzed,
         query: currentQuery,
       });
+      const dump = formatPhotoAiDump(photos) || '(사진 없음)';
+      const published = formatPublishedReview(essay);
+      let parsedContentLength = -1;
       try {
-        const remote = await requestTravelReview(analyzed, trip);
-        if (remote.draft?.body && reviewMeetsRules(remote.draft.body)) {
-          draft = {
-            ...draft,
-            title: remote.draft.title || draft.title,
-            body: remote.draft.body,
-            markdown: remote.draft.markdown || draft.markdown,
-            charCount: remote.draft.body.length,
-            hashtags: [],
-          };
-        }
+        parsedContentLength = JSON.parse(published).content.length;
       } catch {
-        // 서버 실패 시 로컬 후기를 씁니다.
+        parsedContentLength = -1;
       }
-      if (lastReviewFingerprint && essaySimilarity(lastReviewFingerprint, draft.body) > 0.55) {
-        draft = generateTravelBlogEssay({
-          title: trip.title,
-          memo: '장소와 사진 순서를 더 구체적으로 적는다.',
-          checklist: [],
-          places: analyzed,
-          query: currentQuery,
-        });
-      }
-      setLastReviewFingerprint(draft.body);
-      setReviewDraft(draft);
-    } catch {
-      setReviewDraft(
-        generateTravelBlogEssay({
-          title: tripTitle,
-          memo: '',
-          checklist: [],
-          places: prepared,
-          query: currentQuery,
-        })
-      );
+      console.log('[LENGTH] handleGenerateReview', {
+        file: 'src/app/page.tsx',
+        called: 'generateTravelBlogEssay → formatPublishedReview → setReviewDump(published)',
+        essayBodyLength: essay.body.length,
+        reviewContentLength: parsedContentLength,
+        modalJsonLength: published.length,
+        photoDumpLength: dump.length,
+      });
+      const uploadedPhotos = tripPhotos;
+      console.log('uploadedPhotos.length', uploadedPhotos.length);
+      console.log('photos.length', photos.length);
+      console.log('photoResults.length', photoResults.length);
+      console.log('reviewDump', dump);
+      console.log('[노을-review] 최종 후기 본문\n' + published);
+      setReviewDump(published);
+    } catch (error) {
+      console.log('[노을] 사진 분석 실패', error);
+      const photos = sortTripPhotos(collectTripPhotos(prepared));
+      const dump = formatPhotoAiDump(photos) || '(사진 없음)';
+      const uploadedPhotos = tripPhotos;
+      const photoResults = photos.filter((photo) => photo.analysis);
+      console.log('uploadedPhotos.length', uploadedPhotos.length);
+      console.log('photos.length', photos.length);
+      console.log('photoResults.length', photoResults.length);
+      console.log('reviewDump', dump);
+      setReviewDump(dump);
     } finally {
       setIsReviewGenerating(false);
     }
   };
 
+  useEffect(() => {
+    if (!isReviewOpen || isReviewGenerating || reviewDump === null) return;
+    const el = document.querySelector('[data-trace="modal-final"]');
+    const modal = el?.textContent ?? null;
+    const scenesEmbedded = lastTraceScenes.map((scene) =>
+      scene ? reviewDump.includes(scene) : reviewDump.includes('(없음)')
+    );
+    console.log('[TRACE-1] src/app/page.tsx:59 photo.analysis.sceneDescription', lastTraceScenes);
+    console.log('[TRACE-2] src/app/page.tsx:117 reviewDump', reviewDump);
+    console.log('[TRACE-3] src/app/page.tsx:807 modal final string', modal);
+    const compare = {
+      dumpEqualsModal: reviewDump === modal,
+      everySceneInsideDump: scenesEmbedded.every(Boolean),
+      sceneCount: lastTraceScenes.length,
+      scenesEmbedded,
+    };
+    console.log('[TRACE-COMPARE] src/app/page.tsx', compare);
+    setTraceCompare(JSON.stringify(compare, null, 2));
+  }, [isReviewOpen, isReviewGenerating, reviewDump]);
+
   const handleCopyReview = async () => {
-    if (!reviewDraft) return;
+    if (!reviewDump) return;
     try {
-      await navigator.clipboard.writeText(`${reviewDraft.title}\n\n${reviewDraft.body}`);
+      await navigator.clipboard.writeText(reviewDump);
       setReviewCopyNotice('후기를 복사했습니다.');
     } catch {
       setReviewCopyNotice('복사에 실패했습니다. 글을 길게 눌러 복사해 주세요.');
@@ -534,6 +679,7 @@ export default function HomePage() {
 
   return (
     <main className="flex flex-col h-dvh bg-slate-50">
+      <h1 className="text-2xl font-black text-red-600">RUNNING-FILE-TEST-9999</h1>
       <SimQueryRedirect />
       <header className="flex items-center justify-between gap-2 px-3 py-3 bg-white border-b shrink-0 md:px-6 border-slate-200">
         <div className="flex items-center min-w-0 gap-2">
@@ -723,14 +869,19 @@ export default function HomePage() {
               ))}
             </div>
           )}
-          <button
-            type="button"
-            onClick={handleGenerateReview}
-            disabled={isReviewGenerating}
-            className="w-full mb-3 text-2xl font-black text-white rounded-2xl min-h-[76px] h-[76px] bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
-          >
-            {isReviewGenerating ? '후기 작성 중...' : '여행 후기 생성'}
-          </button>
+          <div className="mb-3">
+            <button
+              type="button"
+              data-debug="DEBUG-12345"
+              data-handler="handleGenerateReview"
+              onClick={handleGenerateReview}
+              disabled={isReviewGenerating}
+              className="w-full text-2xl font-black text-white rounded-2xl min-h-[76px] h-[76px] bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
+            >
+              {isReviewGenerating ? '사진 분석 중...' : '여행 후기 생성'}
+            </button>
+            <p className="mt-1 text-center text-[11px] leading-none text-slate-500">10분~30분 소요</p>
+          </div>
           {mapError && <p className="mb-2 text-base font-semibold text-red-600">{mapError}</p>}
           {mapNotice && <p className="mb-2 text-base font-semibold text-slate-700">{mapNotice}</p>}
 
@@ -817,13 +968,14 @@ export default function HomePage() {
                 ×
               </button>
             </div>
-            {isReviewGenerating || !reviewDraft ? (
-              <p className="py-10 text-lg text-center text-slate-500">사진을 읽고 후기를 적는 중입니다...</p>
+            {isReviewGenerating || reviewDump === null ? (
+              <p className="py-10 text-lg text-center text-slate-500">후기를 만드는 중입니다...</p>
             ) : (
               <div className="flex flex-col min-h-0 overflow-y-auto">
-                <p className="mb-2 text-base text-slate-500">본문 {reviewDraft.charCount}자</p>
-                <h3 className="mb-3 text-xl font-bold text-slate-900">{reviewDraft.title}</h3>
-                <div className="text-lg leading-8 whitespace-pre-wrap text-slate-800">{reviewDraft.body}</div>
+                <pre data-trace="modal-final" className="text-sm leading-6 whitespace-pre-wrap text-slate-800">{reviewDump}</pre>
+                {traceCompare ? (
+                  <pre data-trace="compare" className="mt-3 text-xs whitespace-pre-wrap text-red-700">{traceCompare}</pre>
+                ) : null}
                 {reviewCopyNotice && <p className="mt-2 text-base text-slate-600">{reviewCopyNotice}</p>}
               </div>
             )}
@@ -831,7 +983,7 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={handleCopyReview}
-                disabled={!reviewDraft || isReviewGenerating}
+                disabled={!reviewDump || isReviewGenerating}
                 className="flex-1 text-lg font-bold text-white rounded-xl min-h-14 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
               >
                 복사

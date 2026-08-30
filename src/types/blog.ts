@@ -15,6 +15,17 @@ export interface PhotoAnalysis {
   scene?: string;
   landmark?: string;
   visualTags?: string[];
+  ocrText?: string[];
+  sceneDescription?: string;
+  hasPeople?: boolean;
+  peopleCount?: number;
+  ageEstimate?: string;
+  action?: string;
+  expression?: string;
+  weather?: string;
+  timeOfDay?: string;
+  landscapeType?: string;
+  colorTone?: string;
 }
 
 export interface TravelStory {

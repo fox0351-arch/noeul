@@ -35,6 +35,10 @@ function parsePhotos(value: unknown): PhotoAnalysis[] {
       scene: typeof record.scene === 'string' ? record.scene : '',
       landmark: typeof record.landmark === 'string' ? record.landmark : '',
       visualTags,
+      ocrText: Array.isArray(record.ocrText)
+        ? record.ocrText.filter((entry): entry is string => typeof entry === 'string')
+        : [],
+      capturedAt: typeof record.capturedAt === 'string' ? record.capturedAt : undefined,
     };
   });
 }
@@ -69,7 +73,11 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as { photos?: unknown; trip?: unknown };
     const photos = enrichPhotoAnalyses(parsePhotos(body.photos)).filter(
-      (photo) => photo.description || photo.objects.length || photo.place
+      (photo) =>
+        photo.description ||
+        photo.objects.length ||
+        photo.place ||
+        (photo.ocrText?.length ?? 0) > 0
     );
     if (photos.length === 0) {
       return NextResponse.json(
@@ -79,10 +87,14 @@ export async function POST(request: NextRequest) {
     }
     const trip = parseTrip(body.trip);
     const result = await generateTravelBlogDraft(photos, { trip });
+    console.log('[노을-review] fromGemini:', result.fromGemini);
+    console.log('[노을-review] 사진별 ocrText:', photos.map((photo) => ({ file: photo.fileName, ocrText: photo.ocrText })));
+    console.log('[노을-review] LLM prompt\n' + result.prompt);
     return NextResponse.json({
       story: result.story,
       draft: result.draft,
       fromGemini: result.fromGemini,
+      prompt: result.prompt,
       usedPhotos: photos.map((photo) => ({
         order: photo.order,
         place: photo.place,
@@ -90,6 +102,9 @@ export async function POST(request: NextRequest) {
         objects: photo.objects,
         visualTags: photo.visualTags,
         scene: photo.scene,
+        ocrText: photo.ocrText,
+        landmark: photo.landmark,
+        keywords: photo.keywords,
       })),
     });
   } catch (error) {
