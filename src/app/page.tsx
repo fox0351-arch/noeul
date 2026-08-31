@@ -734,6 +734,14 @@ export default function HomePage() {
           >
             {isPhotoBusy ? '사진 준비 중...' : tripPhotos.length > 0 ? `사진 더 올리기 (${tripPhotos.length}장)` : '사진 올리기'}
           </button>
+          <p className="mb-1 text-base font-bold text-red-600">[TEST] 보이는 file input</p>
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handlePhotosSelected}
+            style={{ display: 'block', opacity: 1, width: '100%', minHeight: '44px' }}
+          />
           {tripPhotos.length > 0 && (
             <div className="flex gap-2 mb-2 overflow-x-auto pb-1">
               {tripPhotos.map((photo, index) => (
