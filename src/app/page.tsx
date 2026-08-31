@@ -444,16 +444,11 @@ export default function HomePage() {
   };
 
   const handlePhotosSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    console.log(e.target.files);
+    const files = Array.from(e.target.files ?? []);
+    console.log(files);
     console.log(e.target);
     console.log(e.target.value);
-    const debugFiles = e.target.files;
-    const debugFilesText =
-      debugFiles == null
-        ? String(debugFiles)
-        : `length=${debugFiles.length} names=${Array.from(debugFiles)
-            .map((file) => file.name)
-            .join(',')}`;
+    const debugFilesText = `length=${files.length} names=${files.map((file) => file.name).join(',')}`;
     const debugTargetText = `tag=${e.target.tagName} type=${e.target.type} className=${e.target.className}`;
     const debugValueText = String(e.target.value);
     console.log('[PHOTO-ENTER]');
@@ -464,15 +459,14 @@ export default function HomePage() {
       eTarget: debugTargetText,
       eTargetValue: debugValueText,
     }));
-    const files = e.target.files;
     console.log('[1] files', files);
-    console.log('[PHOTO-FILES]', files?.length);
-    setPhotoSelectDebug((prev) => ({ ...prev, files: files?.length ?? 0, step1Files: files?.length ?? 0 }));
-    const names = files ? Array.from(files).map((file) => file.name) : [];
-    console.log('[PHOTO-1] 선택된 파일 수', files?.length ?? 0, '파일명 목록', names);
-    logPhotoTrace('[PHOTO-1]', { photo1: files?.length ?? 0 });
+    console.log('[PHOTO-FILES]', files.length);
+    setPhotoSelectDebug((prev) => ({ ...prev, files: files.length, step1Files: files.length }));
+    const names = files.map((file) => file.name);
+    console.log('[PHOTO-1] 선택된 파일 수', files.length, '파일명 목록', names);
+    logPhotoTrace('[PHOTO-1]', { photo1: files.length });
     e.target.value = '';
-    if (!files?.length) return;
+    if (!files.length) return;
     setIsPhotoBusy(true);
     setMapError('');
     try {
