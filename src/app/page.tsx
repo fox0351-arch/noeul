@@ -13,8 +13,8 @@ import {
 import { filesToPlacePhotos, isQuotaExceeded, MAX_PHOTOS_PER_PLACE } from '@/lib/placePhotos';
 import { analyzePlacePhotos, emitVisionPhotoJson, inspectVisionImages } from '@/lib/photoAiClient';
 import { compactPhotoFacts, photoFactsFromPlaces } from '@/lib/blog/photoFacts';
-import { generateTravelBlogEssay, logReviewTrace, reviewSeoFromFacts } from '@/lib/travelBlogEssay';
-import { readReviewEngine, writeReviewEngine, type ReviewEngine } from '@/lib/reviewEngine';
+import { logReviewTrace, reviewSeoFromFacts } from '@/lib/travelBlogEssay';
+import { type ReviewEngine } from '@/lib/reviewEngine';
 import { readSearchSession, writeSearchSession } from '@/lib/searchSessionStorage';
 import { TravelMap } from '@/types/travelMap';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
@@ -48,18 +48,6 @@ function placesWithPhotos(places: PlaceItem[], photos: PlacePhoto[]): PlaceItem[
     ...place,
     photos: index === 0 ? photos : [],
   }));
-}
-
-function formatPublishedReview(
-  essay: ReturnType<typeof generateTravelBlogEssay>,
-  engine: ReviewEngine = 'legacy'
-) {
-  return {
-    title: essay.title,
-    body: essay.body,
-    hashtags: (essay.hashtags ?? []).map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)),
-    engine,
-  };
 }
 
 function sortTripPhotos(photos: PlacePhoto[]): PlacePhoto[] {
@@ -104,7 +92,7 @@ export default function HomePage() {
     engine: ReviewEngine;
   } | null>(null);
   const [reviewCopyNotice, setReviewCopyNotice] = useState('');
-  const [reviewEngine, setReviewEngine] = useState<ReviewEngine>('legacy');
+  const reviewEngine = 'ai' as const;
   const photoInputRef = useRef<HTMLInputElement>(null);
   const sessionReadyRef = useRef(false);
   const placesRef = useRef<PlaceItem[]>([]);
@@ -260,12 +248,6 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
-  /* eslint-enable react-hooks/set-state-in-effect */
-
-  /* eslint-disable react-hooks/set-state-in-effect -- 후기 엔진 선택을 저장값으로 복원합니다 */
-  useEffect(() => {
-    setReviewEngine(readReviewEngine());
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -521,14 +503,6 @@ export default function HomePage() {
     });
     console.log('[REVIEW-TRACE] 3-vectorDB', { invoked: false });
     const prepared = placesWithPhotos(selectedPlaces, sourcePhotos);
-    const buildEssay = (essayPlaces: PlaceItem[]) =>
-      generateTravelBlogEssay({
-        title: currentQuery.trim() || keyword.trim() || '여행',
-        memo: '',
-        checklist: [],
-        places: essayPlaces,
-        query: currentQuery,
-      });
     try {
       const preparedPhotos = collectTripPhotos(prepared);
       const factsReady =
@@ -567,45 +541,37 @@ export default function HomePage() {
       setTripPhotos(photos.length > 0 ? photos : sourcePhotos);
       const placesForEssay = placesWithPhotos(analyzed, photos.length > 0 ? photos : sourcePhotos);
       const titleSeed = currentQuery.trim() || keyword.trim() || '여행';
-      logReviewTrace('[REVIEW-TRACE] review-engine', { engine: reviewEngine });
-      if (reviewEngine === 'ai') {
-        const facts = photoFactsFromPlaces(placesForEssay);
-        const seo = reviewSeoFromFacts(facts, placesForEssay, currentQuery);
-        const response = await fetch('/api/photos/ai-review', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            photoFacts: compactPhotoFacts(facts),
-            selectedPlaces: selectedPlaces.map((place) => ({ name: place.name, address: place.address })),
-            titleSeed,
-          }),
-        });
-        const payload = (await response.json()) as { title?: unknown; content?: unknown; error?: unknown };
-        if (!response.ok || typeof payload.title !== 'string' || typeof payload.content !== 'string') {
-          throw new Error(typeof payload.error === 'string' ? payload.error : 'AI 후기를 만들지 못했습니다.');
-        }
-        setReview({
-          title: payload.title,
-          body: payload.content,
-          hashtags: seo.hashtags.map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)),
-          engine: 'ai',
-        });
-      } else {
-        setReview(formatPublishedReview(buildEssay(placesForEssay), 'legacy'));
+      logReviewTrace('[REVIEW-TRACE] review-engine', { engine: 'ai' });
+      const facts = photoFactsFromPlaces(placesForEssay);
+      const seo = reviewSeoFromFacts(facts, placesForEssay, currentQuery);
+      const response = await fetch('/api/photos/ai-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          photoFacts: compactPhotoFacts(facts),
+          selectedPlaces: selectedPlaces.map((place) => ({ name: place.name, address: place.address })),
+          titleSeed,
+        }),
+      });
+      const payload = (await response.json()) as { title?: unknown; content?: unknown; error?: unknown };
+      if (!response.ok || typeof payload.title !== 'string' || typeof payload.content !== 'string') {
+        throw new Error(typeof payload.error === 'string' ? payload.error : 'AI 후기를 만들지 못했습니다.');
       }
+      setReview({
+        title: payload.title,
+        body: payload.content,
+        hashtags: seo.hashtags.map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)),
+        engine: 'ai',
+      });
     } catch (error) {
-      if (reviewEngine === 'ai') {
-        const message = error instanceof Error ? error.message : 'AI 후기를 만들지 못했습니다.';
-        setMapError(message);
-        setReview({
-          title: 'AI 후기를 만들지 못했습니다',
-          body: message,
-          hashtags: [],
-          engine: 'ai',
-        });
-      } else {
-        setReview(formatPublishedReview(buildEssay(prepared), 'legacy'));
-      }
+      const message = error instanceof Error ? error.message : 'AI 후기를 만들지 못했습니다.';
+      setMapError(message);
+      setReview({
+        title: 'AI 후기를 만들지 못했습니다',
+        body: message,
+        hashtags: [],
+        engine: 'ai',
+      });
     } finally {
       setIsReviewGenerating(false);
     }
@@ -814,39 +780,6 @@ export default function HomePage() {
             </div>
           )}
           <div className="mb-3">
-            <p className="mb-2 text-base font-bold text-slate-800">후기 생성 방식</p>
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <button
-                type="button"
-                aria-pressed={reviewEngine === 'legacy'}
-                onClick={() => {
-                  setReviewEngine('legacy');
-                  writeReviewEngine('legacy');
-                }}
-                className={`rounded-xl min-h-14 text-base font-bold border ${
-                  reviewEngine === 'legacy'
-                    ? 'bg-amber-600 text-white border-amber-600'
-                    : 'bg-white text-slate-700 border-slate-300'
-                }`}
-              >
-                기존 템플릿 후기
-              </button>
-              <button
-                type="button"
-                aria-pressed={reviewEngine === 'ai'}
-                onClick={() => {
-                  setReviewEngine('ai');
-                  writeReviewEngine('ai');
-                }}
-                className={`rounded-xl min-h-14 text-base font-bold border ${
-                  reviewEngine === 'ai'
-                    ? 'bg-amber-600 text-white border-amber-600'
-                    : 'bg-white text-slate-700 border-slate-300'
-                }`}
-              >
-                AI 후기
-              </button>
-            </div>
             <button
               type="button"
               onClick={() => {
@@ -855,13 +788,7 @@ export default function HomePage() {
               disabled={isReviewGenerating}
               className="flex flex-col items-center justify-center w-full text-2xl font-black text-white rounded-2xl min-h-[76px] h-[76px] bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
             >
-              <span>
-                {isReviewGenerating
-                  ? reviewEngine === 'ai'
-                    ? 'AI 후기 작성 중...'
-                    : '사진 분석 중...'
-                  : '여행 후기 생성'}
-              </span>
+              <span>{isReviewGenerating ? 'AI 후기 작성 중...' : '여행 후기 생성'}</span>
               <span className="mt-1 text-[10px] font-normal leading-none text-white">10분~30분 소요</span>
             </button>
           </div>
