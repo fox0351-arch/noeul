@@ -11,8 +11,10 @@ import {
   updateTravelMap,
 } from '@/lib/travelMapStorage';
 import { filesToPlacePhotos, isQuotaExceeded, MAX_PHOTOS_PER_PLACE } from '@/lib/placePhotos';
-import { analyzePlacePhotos } from '@/lib/photoAiClient';
-import { generateTravelBlogEssay } from '@/lib/travelBlogEssay';
+import { analyzePlacePhotos, emitVisionPhotoJson, inspectVisionImages } from '@/lib/photoAiClient';
+import { compactPhotoFacts, photoFactsFromPlaces } from '@/lib/blog/photoFacts';
+import { generateTravelBlogEssay, logReviewTrace, reviewSeoFromFacts } from '@/lib/travelBlogEssay';
+import { readReviewEngine, writeReviewEngine, type ReviewEngine } from '@/lib/reviewEngine';
 import { readSearchSession, writeSearchSession } from '@/lib/searchSessionStorage';
 import { TravelMap } from '@/types/travelMap';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
@@ -48,11 +50,15 @@ function placesWithPhotos(places: PlaceItem[], photos: PlacePhoto[]): PlaceItem[
   }));
 }
 
-function formatPublishedReview(essay: ReturnType<typeof generateTravelBlogEssay>) {
+function formatPublishedReview(
+  essay: ReturnType<typeof generateTravelBlogEssay>,
+  engine: ReviewEngine = 'legacy'
+) {
   return {
     title: essay.title,
     body: essay.body,
     hashtags: (essay.hashtags ?? []).map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)),
+    engine,
   };
 }
 
@@ -126,8 +132,14 @@ export default function HomePage() {
   const [isPhotoBusy, setIsPhotoBusy] = useState(false);
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [isReviewGenerating, setIsReviewGenerating] = useState(false);
-  const [review, setReview] = useState<{ title: string; body: string; hashtags: string[] } | null>(null);
+  const [review, setReview] = useState<{
+    title: string;
+    body: string;
+    hashtags: string[];
+    engine: ReviewEngine;
+  } | null>(null);
   const [reviewCopyNotice, setReviewCopyNotice] = useState('');
+  const [reviewEngine, setReviewEngine] = useState<ReviewEngine>('legacy');
   const photoInputRef = useRef<HTMLInputElement>(null);
   const sessionReadyRef = useRef(false);
   const placesRef = useRef<PlaceItem[]>([]);
@@ -283,6 +295,12 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  /* eslint-disable react-hooks/set-state-in-effect -- 후기 엔진 선택을 저장값으로 복원합니다 */
+  useEffect(() => {
+    setReviewEngine(readReviewEngine());
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -566,6 +584,13 @@ export default function HomePage() {
     setIsReviewOpen(true);
     const sourcePhotos = sortTripPhotos(tripPhotos.length > 0 ? tripPhotos : collectTripPhotos(selectedPlaces));
     logPhotoTrace('[PHOTO-6]', { photo6: sourcePhotos.length });
+    console.log('[REVIEW-TRACE] 2-place-search', {
+      query: currentQuery,
+      keyword,
+      allPlaces: places.map((place) => ({ id: place.id, name: place.name, address: place.address })),
+      selectedPlaces: selectedPlaces.map((place) => ({ id: place.id, name: place.name, address: place.address })),
+    });
+    console.log('[REVIEW-TRACE] 3-vectorDB', { invoked: false });
     const prepared = placesWithPhotos(selectedPlaces, sourcePhotos);
     const buildEssay = (essayPlaces: PlaceItem[]) =>
       generateTravelBlogEssay({
@@ -580,14 +605,78 @@ export default function HomePage() {
       const factsReady =
         preparedPhotos.length > 0 &&
         preparedPhotos.every((photo) => (photo.analysis?.sceneDescription || photo.analysis?.caption || '').trim());
-      const analyzed = factsReady ? prepared : await analyzePlacePhotos(prepared, { force: true });
+      const visionImages = await inspectVisionImages(preparedPhotos, tripPhotos);
+      logReviewTrace('[REVIEW-TRACE] 0-vision-image', {
+        visionInvoked: !factsReady,
+        tripPhotosCount: tripPhotos.length,
+        preparedPhotosCount: preparedPhotos.length,
+        sameAsTripPhotos: preparedPhotos.every((photo) =>
+          tripPhotos.some((trip) => trip.id === photo.id && trip.dataUrl === photo.dataUrl)
+        ),
+        images: visionImages,
+      });
+      await emitVisionPhotoJson(preparedPhotos, tripPhotos);
+      const analyzed = factsReady ? prepared : await analyzePlacePhotos(prepared, { force: true, tripPhotos });
       const photos = sortTripPhotos(collectTripPhotos(analyzed));
+      logReviewTrace(
+        '[REVIEW-TRACE] 1-photo-analysis',
+        photos.map((photo, index) => ({
+          index: index + 1,
+          id: photo.id,
+          ocrText: photo.analysis?.ocrText ?? [],
+          sceneDescription: photo.analysis?.sceneDescription ?? '',
+          caption: photo.analysis?.caption ?? '',
+          keywords: photo.analysis?.keywords ?? [],
+          landmark: photo.analysis?.landmark ?? '',
+          scene: photo.analysis?.scene ?? null,
+          subjects: photo.analysis?.subjects ?? [],
+          landscapeType: photo.analysis?.landscapeType ?? '',
+          analysisPresent: Boolean(photo.analysis),
+        }))
+      );
       persistTrip(places, checkedIds, photos.length > 0 ? photos : sourcePhotos);
       setTripPhotos(photos.length > 0 ? photos : sourcePhotos);
       const placesForEssay = placesWithPhotos(analyzed, photos.length > 0 ? photos : sourcePhotos);
-      setReview(formatPublishedReview(buildEssay(placesForEssay)));
-    } catch {
-      setReview(formatPublishedReview(buildEssay(prepared)));
+      const titleSeed = currentQuery.trim() || keyword.trim() || '여행';
+      logReviewTrace('[REVIEW-TRACE] review-engine', { engine: reviewEngine });
+      if (reviewEngine === 'ai') {
+        const facts = photoFactsFromPlaces(placesForEssay);
+        const seo = reviewSeoFromFacts(facts, placesForEssay, currentQuery);
+        const response = await fetch('/api/photos/ai-review', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            photoFacts: compactPhotoFacts(facts),
+            selectedPlaces: selectedPlaces.map((place) => ({ name: place.name, address: place.address })),
+            titleSeed,
+          }),
+        });
+        const payload = (await response.json()) as { title?: unknown; content?: unknown; error?: unknown };
+        if (!response.ok || typeof payload.title !== 'string' || typeof payload.content !== 'string') {
+          throw new Error(typeof payload.error === 'string' ? payload.error : 'AI 후기를 만들지 못했습니다.');
+        }
+        setReview({
+          title: payload.title,
+          body: payload.content,
+          hashtags: seo.hashtags.map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)),
+          engine: 'ai',
+        });
+      } else {
+        setReview(formatPublishedReview(buildEssay(placesForEssay), 'legacy'));
+      }
+    } catch (error) {
+      if (reviewEngine === 'ai') {
+        const message = error instanceof Error ? error.message : 'AI 후기를 만들지 못했습니다.';
+        setMapError(message);
+        setReview({
+          title: 'AI 후기를 만들지 못했습니다',
+          body: message,
+          hashtags: [],
+          engine: 'ai',
+        });
+      } else {
+        setReview(formatPublishedReview(buildEssay(prepared), 'legacy'));
+      }
     } finally {
       setIsReviewGenerating(false);
     }
@@ -817,6 +906,39 @@ export default function HomePage() {
           <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 4 afterSet={photoSelectDebug.step4AfterSet ?? ''}</p>
           <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 5 effect tripPhotos={photoSelectDebug.effectTripPhotos ?? ''}</p>
           <div className="mb-3">
+            <p className="mb-2 text-base font-bold text-slate-800">후기 생성 방식</p>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <button
+                type="button"
+                aria-pressed={reviewEngine === 'legacy'}
+                onClick={() => {
+                  setReviewEngine('legacy');
+                  writeReviewEngine('legacy');
+                }}
+                className={`rounded-xl min-h-14 text-base font-bold border ${
+                  reviewEngine === 'legacy'
+                    ? 'bg-amber-600 text-white border-amber-600'
+                    : 'bg-white text-slate-700 border-slate-300'
+                }`}
+              >
+                기존 템플릿 후기
+              </button>
+              <button
+                type="button"
+                aria-pressed={reviewEngine === 'ai'}
+                onClick={() => {
+                  setReviewEngine('ai');
+                  writeReviewEngine('ai');
+                }}
+                className={`rounded-xl min-h-14 text-base font-bold border ${
+                  reviewEngine === 'ai'
+                    ? 'bg-amber-600 text-white border-amber-600'
+                    : 'bg-white text-slate-700 border-slate-300'
+                }`}
+              >
+                AI 후기
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -826,7 +948,13 @@ export default function HomePage() {
               disabled={isReviewGenerating}
               className="flex flex-col items-center justify-center w-full text-2xl font-black text-white rounded-2xl min-h-[76px] h-[76px] bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
             >
-              <span>{isReviewGenerating ? '사진 분석 중...' : '여행 후기 생성'}</span>
+              <span>
+                {isReviewGenerating
+                  ? reviewEngine === 'ai'
+                    ? 'AI 후기 작성 중...'
+                    : '사진 분석 중...'
+                  : '여행 후기 생성'}
+              </span>
               <span className="mt-1 text-[10px] font-normal leading-none text-white">10분~30분 소요</span>
             </button>
           </div>
@@ -915,7 +1043,14 @@ export default function HomePage() {
         <div className="fixed inset-0 z-[60] flex flex-col bg-white md:items-center md:justify-center md:bg-slate-900/40 md:p-6">
           <div className="relative z-10 flex flex-col w-full h-full max-h-full p-4 bg-white md:h-auto md:max-h-[88vh] md:max-w-[640px] md:rounded-2xl">
             <div className="flex items-start justify-between gap-3 mb-3">
-              <h2 className="text-xl font-black text-slate-800">여행 후기</h2>
+              <div>
+                <h2 className="text-xl font-black text-slate-800">여행 후기</h2>
+                <p className="mt-1 text-sm font-bold text-slate-500">
+                  {review?.engine === 'ai' || (isReviewGenerating && reviewEngine === 'ai')
+                    ? 'AI 후기'
+                    : '기존 템플릿 후기'}
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={closeOverlays}

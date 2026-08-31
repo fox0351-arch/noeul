@@ -63,6 +63,15 @@ function unique(items: string[]): string[] {
   return out;
 }
 
+export function logReviewTrace(tag: string, payload: unknown): void {
+  const text = JSON.stringify(payload, null, 2);
+  console.log(tag);
+  console.log(text);
+  if (typeof window === 'undefined') return;
+  const w = window as Window & { __NOEUL_REVIEW_TRACE?: Record<string, unknown> };
+  w.__NOEUL_REVIEW_TRACE = { ...(w.__NOEUL_REVIEW_TRACE || {}), [tag]: payload };
+}
+
 function joinBody(paragraphs: string[]): string {
   return paragraphs.filter((p) => p.trim()).join('\n\n');
 }
@@ -244,7 +253,13 @@ function allBlob(facts: OrderedPhotoFact[]): string {
   return facts.map(photoBlob).join(' ');
 }
 
-type SceneBeat = { order: number; key: string; sentence: string };
+type SceneBeat = {
+  order: number;
+  key: string;
+  sentence: string;
+  source: 'sceneDescription' | 'BEAT_RULES';
+  sceneDescription: string;
+};
 
 const BEAT_RULES: { key: string; test: RegExp; sentence: string }[] = [
   { key: 'deck', test: /데크/, sentence: '데크길을 천천히 걸었다. 아내가 손 잡으라 해서 손을 잡았다.' },
@@ -294,13 +309,30 @@ function beatsFromFacts(facts: OrderedPhotoFact[]): SceneBeat[] {
   const used = new Set<string>();
   const beats: SceneBeat[] = [];
   for (const fact of facts) {
+    const scene = (fact.sceneDescription || '').trim();
+    if (scene) {
+      beats.push({
+        order: fact.order,
+        key: `scene-${fact.order}`,
+        sentence: toSpokenPast(scene),
+        source: 'sceneDescription',
+        sceneDescription: scene,
+      });
+      continue;
+    }
     const blob = photoBlob(fact);
     if (!blob.replace(/\s+/g, '')) continue;
     let picked: SceneBeat | null = null;
     for (const rule of BEAT_RULES) {
       if (!rule.test.test(blob) || used.has(rule.key)) continue;
       used.add(rule.key);
-      picked = { order: fact.order, key: rule.key, sentence: rule.sentence };
+      picked = {
+        order: fact.order,
+        key: rule.key,
+        sentence: rule.sentence,
+        source: 'BEAT_RULES',
+        sceneDescription: '',
+      };
       break;
     }
     const digit = digitOcr(fact);
@@ -309,7 +341,13 @@ function beatsFromFacts(facts: OrderedPhotoFact[]): SceneBeat[] {
       if (picked) picked = { ...picked, sentence: `${picked.sentence} ${extra}` };
       else if (!used.has(`digit-${digit}`)) {
         used.add(`digit-${digit}`);
-        picked = { order: fact.order, key: `digit-${digit}`, sentence: extra };
+        picked = {
+          order: fact.order,
+          key: `digit-${digit}`,
+          sentence: extra,
+          source: 'BEAT_RULES',
+          sceneDescription: '',
+        };
       }
     }
     if (picked) beats.push(picked);
@@ -317,50 +355,126 @@ function beatsFromFacts(facts: OrderedPhotoFact[]): SceneBeat[] {
   return beats;
 }
 
-function introFrom(facts: OrderedPhotoFact[]): string {
-  const first = facts.find((fact) => (fact.sceneDescription || fact.caption).trim());
-  const head = first ? photoBlob(first) : '';
-  const whole = allBlob(facts);
-  if (/촛대|추암/.test(head) || (/촛대|추암/.test(whole) && !/정상석|올레|송해/.test(head))) {
-    return '아내랑 부산에서 일찍 차를 몰고 나왔다. 추암 해안을 한번 보자 했다. 차에서 내리니 바람이 차서 옷깃을 여몄다.';
-  }
-  if (/성산일출봉|올레/.test(head) || /성산일출봉|올레/.test(whole)) {
-    return '아내랑 부산에서 일찍 나왔다. 올레길을 한번 걸어 보자 했다. 차에서 내리니 바다가 먼저 보였다.';
-  }
-  if (/송해/.test(head) || /송해/.test(whole)) {
-    return '아내랑 둘이 나왔다. 송해공원에 잠깐 들르자 했다. 강바람이 낮아 걷기 좋았다.';
-  }
-  if (/정상석|태백산/.test(head)) {
-    return '아내랑 부산에서 일찍 나왔다. 산길을 한번 올라보자 했다. 숨이 차올랐다.';
-  }
-  if (/모래사장/.test(head)) {
-    return '아내랑 둘이 바닷가에 섰다. 파도 소리가 먼저 왔다. 걸음은 느렸다.';
-  }
-  return '아내랑 부산에서 일찍 나왔다. 그날 본 것만 적어 본다. 발걸음은 느렸다.';
+function firstSceneFact(facts: OrderedPhotoFact[]): OrderedPhotoFact | undefined {
+  return facts.find((fact) => (fact.sceneDescription || '').trim());
 }
 
-function closeFrom(facts: OrderedPhotoFact[]): string {
-  const last = [...facts].reverse().find((fact) => (fact.sceneDescription || fact.caption).trim());
-  const tail = last ? photoBlob(last) : '';
+function lastSceneFact(facts: OrderedPhotoFact[]): OrderedPhotoFact | undefined {
+  return [...facts].reverse().find((fact) => (fact.sceneDescription || '').trim());
+}
+
+function introFrom(facts: OrderedPhotoFact[]): {
+  text: string;
+  source: 'sceneDescription' | 'template';
+  sceneDescription: string | null;
+} {
+  const first = firstSceneFact(facts);
+  if (first) {
+    const scene = first.sceneDescription.trim();
+    return { text: toSpokenPast(scene), source: 'sceneDescription', sceneDescription: scene };
+  }
+  const head = facts[0] ? photoBlob(facts[0]) : '';
+  const whole = allBlob(facts);
+  if (/촛대|추암/.test(head) || (/촛대|추암/.test(whole) && !/정상석|올레|송해/.test(head))) {
+    return {
+      text: '아내랑 부산에서 일찍 차를 몰고 나왔다. 추암 해안을 한번 보자 했다. 차에서 내리니 바람이 차서 옷깃을 여몄다.',
+      source: 'template',
+      sceneDescription: null,
+    };
+  }
+  if (/성산일출봉|올레/.test(head) || /성산일출봉|올레/.test(whole)) {
+    return {
+      text: '아내랑 부산에서 일찍 나왔다. 올레길을 한번 걸어 보자 했다. 차에서 내리니 바다가 먼저 보였다.',
+      source: 'template',
+      sceneDescription: null,
+    };
+  }
+  if (/송해/.test(head) || /송해/.test(whole)) {
+    return {
+      text: '아내랑 둘이 나왔다. 송해공원에 잠깐 들르자 했다. 강바람이 낮아 걷기 좋았다.',
+      source: 'template',
+      sceneDescription: null,
+    };
+  }
+  if (/정상석|태백산/.test(head)) {
+    return {
+      text: '아내랑 부산에서 일찍 나왔다. 산길을 한번 올라보자 했다. 숨이 차올랐다.',
+      source: 'template',
+      sceneDescription: null,
+    };
+  }
+  if (/모래사장/.test(head)) {
+    return {
+      text: '아내랑 둘이 바닷가에 섰다. 파도 소리가 먼저 왔다. 걸음은 느렸다.',
+      source: 'template',
+      sceneDescription: null,
+    };
+  }
+  return {
+    text: '아내랑 부산에서 일찍 나왔다. 그날 본 것만 적어 본다. 발걸음은 느렸다.',
+    source: 'template',
+    sceneDescription: null,
+  };
+}
+
+function closeFrom(facts: OrderedPhotoFact[]): {
+  text: string;
+  source: 'sceneDescription' | 'template';
+  sceneDescription: string | null;
+} {
+  const last = lastSceneFact(facts);
+  if (last) {
+    const scene = last.sceneDescription.trim();
+    return { text: toSpokenPast(scene), source: 'sceneDescription', sceneDescription: scene };
+  }
+  const tail = facts.length ? photoBlob(facts[facts.length - 1]) : '';
   if (/촛대|출렁|해식 아치/.test(tail)) {
-    return '돌아가는 차 안에서 아내가 다음에 또 오재 하더라. 나도 그러자고 했다. 다리가 아팠지만 마음은 편했다.';
+    return {
+      text: '돌아가는 차 안에서 아내가 다음에 또 오재 하더라. 나도 그러자고 했다. 다리가 아팠지만 마음은 편했다.',
+      source: 'template',
+      sceneDescription: null,
+    };
   }
   if (/모래사장/.test(tail)) {
-    return '신발에 모래가 남아 털었다. 아내가 다음에 또 걷자 했다.';
+    return {
+      text: '신발에 모래가 남아 털었다. 아내가 다음에 또 걷자 했다.',
+      source: 'template',
+      sceneDescription: null,
+    };
   }
   if (/수평선|노을|주황/.test(tail)) {
-    return '돌아가는 길에 아내가 다음에 또 걷자 했다. 발이 저렸지만 마음은 편했다.';
+    return {
+      text: '돌아가는 길에 아내가 다음에 또 걷자 했다. 발이 저렸지만 마음은 편했다.',
+      source: 'template',
+      sceneDescription: null,
+    };
   }
   if (/송해공원|표석/.test(tail)) {
-    return '입구를 나오며 아내가 다음에 또 오재 하더라. 나도 고개를 끄덕였다.';
+    return {
+      text: '입구를 나오며 아내가 다음에 또 오재 하더라. 나도 고개를 끄덕였다.',
+      source: 'template',
+      sceneDescription: null,
+    };
   }
   if (/샘물|검룡소|정상석/.test(tail)) {
-    return '내려오는 길에 아내가 다음에 또 오재 하더라. 다리가 후들거렸지만 마음은 편했다.';
+    return {
+      text: '내려오는 길에 아내가 다음에 또 오재 하더라. 다리가 후들거렸지만 마음은 편했다.',
+      source: 'template',
+      sceneDescription: null,
+    };
   }
   if (/파도|바다/.test(tail)) {
-    return '돌아가는 차 안에서 말이 적었다. 아내가 다음에 또 오재 하더라. 마음은 편했다.';
+    return {
+      text: '돌아가는 차 안에서 말이 적었다. 아내가 다음에 또 오재 하더라. 마음은 편했다.',
+      source: 'template',
+      sceneDescription: null,
+    };
   }
-  return '돌아가는 차 안에서 아내가 다음에 또 오재 하더라. 나도 그러자고 했다. 마음은 편했다.';
+  return {
+    text: '돌아가는 차 안에서 아내가 다음에 또 오재 하더라. 나도 그러자고 했다. 마음은 편했다.',
+    source: 'template',
+    sceneDescription: null,
+  };
 }
 
 function reviewTitle(facts: OrderedPhotoFact[], titleSeed: string): string {
@@ -397,42 +511,34 @@ function clipEssay(body: string, max: number): string {
   return (idx > 200 ? text.slice(0, idx + 2) : sliced).trim();
 }
 
-function growEssay(body: string, beats: SceneBeat[], min: number, max: number): string {
-  if (body.length >= min) return body;
-  const keys = new Set(beats.map((beat) => beat.key));
-  const extras = unique(
-    keys.has('sand')
-      ? ['모래가 신발에 들어가 털었다. 모자를 눌러 썼다. 파도 소리에 말은 잘 안 들렸다.']
-      : keys.has('statue') || keys.has('nakdong')
-        ? [
-            '벤치에 앉아 다리를 주물렀다. 아내가 여기 참 조용하다 했다. 물 한 모금 마시고 일어섰다.',
-            '천천히 걸어 나오니 마음이 풀렸다. 아내 손을 잡고 천천히 걸어 나왔다.',
-          ]
-        : keys.has('seongsan') || keys.has('olle') || keys.has('horizon')
-          ? ['물 한 모금 마시고 또 걸었다. 돌에 앉아 신발을 털었다. 아내가 천천히 가자 했다.']
-          : keys.has('candle') || keys.has('bridge') || keys.has('deck')
-            ? [
-                '물 한 모금 마시고 또 걸었다. 바람 때문에 모자를 눌러 썼다. 아내가 천천히 가자 했다.',
-                '난간에 기대 숨을 골랐다. 말이 적어도 발은 맞았다.',
-                '중간에 앉아 다리를 주물렀다. 아내가 무리하지 말라 했다. 나도 고개 끄덕이고 다시 천천히 걸었다.',
-              ]
-            : keys.has('peak') || keys.has('rime')
-              ? ['중간중간 앉아 숨을 골랐다. 장갑을 고쳐 끼었다. 아내가 무리하지 말라 했다.']
-              : ['물 한 모금 마시고 또 걸었다. 쉬는 곳이 있어 다행이었다.']
+function growEssay(
+  body: string,
+  beats: SceneBeat[],
+  min: number,
+  max: number
+): {
+  body: string;
+  extra: string;
+  source: 'sceneDescription' | 'none';
+  sceneDescriptions: string[];
+} {
+  const sceneDescriptions = unique(
+    beats.filter((beat) => beat.source === 'sceneDescription' && beat.sceneDescription.trim()).map((beat) => beat.sceneDescription.trim())
   );
-  let text = body;
-  let added = 0;
-  for (const extra of extras) {
-    if (text.length >= min || added >= 5) break;
-    if (text.includes(extra)) continue;
-    const parts = text.split(/\n\n+/);
-    const ending = parts.length > 1 ? parts.pop() as string : '';
-    const next = joinBody(ending ? [...parts, extra, ending] : [text, extra]);
-    if (next.length > max) break;
-    text = next;
-    added += 1;
+  if (body.length >= min) {
+    return { body, extra: '', source: 'none', sceneDescriptions };
   }
-  return text;
+  const extra = unique(sceneDescriptions.map((scene) => toSpokenPast(scene))).join(' ');
+  if (!extra) {
+    return { body, extra: '', source: 'none', sceneDescriptions };
+  }
+  const parts = body.split(/\n\n+/);
+  const ending = parts.length > 1 ? (parts.pop() as string) : '';
+  const next = joinBody(ending ? [...parts, extra, ending] : [body, extra]);
+  if (next.length > max || body.includes(extra)) {
+    return { body, extra, source: 'sceneDescription', sceneDescriptions };
+  }
+  return { body: next, extra, source: 'sceneDescription', sceneDescriptions };
 }
 
 function copiesScene(facts: OrderedPhotoFact[], body: string): boolean {
@@ -442,21 +548,75 @@ function copiesScene(facts: OrderedPhotoFact[], body: string): boolean {
   });
 }
 
+function logSceneDescriptionUsed(facts: OrderedPhotoFact[], beats: SceneBeat[], body: string): void {
+  const paragraphs = body.split(/\n\n+/).filter((part) => part.trim());
+  const payload = {
+    photos: facts.map((fact) => {
+      const beat = beats.find((item) => item.order === fact.order);
+      const scene = (fact.sceneDescription || '').trim();
+      return {
+        order: fact.order,
+        sceneDescription: scene,
+        used: beat?.source === 'sceneDescription',
+        source: beat?.source ?? 'none',
+        sentence: beat?.sentence ?? '',
+      };
+    }),
+    paragraphs: paragraphs.map((text, index) => {
+      const matched = beats.filter((beat) => {
+        if (beat.source !== 'sceneDescription' || !beat.sceneDescription) return false;
+        return text.includes(beat.sentence) || text.includes(beat.sceneDescription);
+      });
+      return {
+        paragraphIndex: index + 1,
+        text,
+        sceneDescription: matched.map((beat) => beat.sceneDescription),
+        source: matched.length ? 'sceneDescription' : 'not-sceneDescription',
+        photoOrders: matched.map((beat) => beat.order),
+      };
+    }),
+  };
+  logReviewTrace('[REVIEW-TRACE] sceneDescription-used', payload);
+}
+
+/** legacy 템플릿 후기. A/B 비교용. 삭제하지 말 것. */
 function composeCoupleEssay(facts: OrderedPhotoFact[]): { body: string; usedOrders: number[] } {
   const ok = facts.filter((fact) => (fact.sceneDescription || fact.caption || fact.ocrText.join('')).trim());
   if (ok.length === 0) {
+    logSceneDescriptionUsed(facts, [], '사진에서 그날의 장면을 읽지 못했다. 글로 남기기엔 부족했다.');
     return { body: '사진에서 그날의 장면을 읽지 못했다. 글로 남기기엔 부족했다.', usedOrders: [] };
   }
   const beats = beatsFromFacts(facts);
   const intro = introFrom(facts);
   const close = closeFrom(facts);
+  logReviewTrace('[REVIEW-TRACE] intro-source', {
+    source: intro.source,
+    sceneDescription: intro.sceneDescription,
+    text: intro.text,
+  });
+  logReviewTrace('[REVIEW-TRACE] close-source', {
+    source: close.source,
+    sceneDescription: close.sceneDescription,
+    text: close.text,
+  });
   const middle = packStory(beats);
-  let body = joinBody([intro, ...middle, close]);
+  let body = joinBody([intro.text, ...middle, close.text]);
   const beforeGrow = body.length;
-  body = growEssay(body, beats, REVIEW_MIN_CHARS, REVIEW_MAX_CHARS);
+  const grown = growEssay(body, beats, REVIEW_MIN_CHARS, REVIEW_MAX_CHARS);
+  logReviewTrace('[REVIEW-TRACE] growEssay-source', {
+    source: grown.source,
+    sceneDescriptions: grown.sceneDescriptions,
+    extra: grown.extra,
+    added: grown.body !== body,
+    beforeLength: beforeGrow,
+    afterLength: grown.body.length,
+  });
+  body = grown.body;
   const afterGrow = body.length;
   body = clipEssay(body, REVIEW_MAX_CHARS);
   const afterClip = body.length;
+  const trimmed = body.trim();
+  logSceneDescriptionUsed(facts, beats, trimmed);
   console.log('[PROOF] composeCoupleEssay RAN', {
     file: 'src/lib/travelBlogEssay.ts',
     fn: 'composeCoupleEssay',
@@ -477,39 +637,63 @@ function composeCoupleEssay(facts: OrderedPhotoFact[]): { body: string; usedOrde
       afterGrow,
       afterClip,
       beatCount: beats.length,
-      body: body.trim(),
+      body: trimmed,
     };
   }
-  return { body: body.trim(), usedOrders: unique(beats.map((beat) => String(beat.order))).map(Number) };
+  return { body: trimmed, usedOrders: unique(beats.map((beat) => String(beat.order))).map(Number) };
 }
 
-function blogSeo(facts: OrderedPhotoFact[]): { keywords: string[]; hashtags: string[] } {
-  const stop = new Set(['지구', '현황', '요령', '국민', '발생', '지도', '표지판', '돌', '하늘', '나무', '정보', '행동요령', '국민행동요령', '재난안전대책본부', '긴급대피장소', '대피안내']);
-  const words: string[] = [];
-  const push = (value: string) => {
-    const trimmed = value.replace(/^#/, '').replace(/\s+/g, '').trim();
-    if (trimmed.length < 2 || trimmed.length > 12) return;
-    if (stop.has(trimmed)) return;
-    words.push(trimmed);
+function blogSeo(
+  facts: OrderedPhotoFact[],
+  places: PlaceItem[],
+  query = ''
+): { keywords: string[]; hashtags: string[]; origin: { tag: string; from: 'selectedPlaces' | 'landmark' | 'course' | 'region'; value: string }[] } {
+  const origin: { tag: string; from: 'selectedPlaces' | 'landmark' | 'course' | 'region'; value: string }[] = [];
+  const push = (raw: string, from: (typeof origin)[number]['from'], value: string) => {
+    const word = raw.replace(/^#/, '').replace(/\s+/g, '').trim();
+    if (word.length < 2 || word.length > 12) return;
+    const tag = `#${word}`;
+    if (origin.some((item) => item.tag === tag)) return;
+    origin.push({ tag, from, value });
   };
-  const blob = facts.map((fact) => `${fact.sceneDescription} ${fact.ocrText.join(' ')}`).join(' ');
-  const preferred: string[] = [];
-  if (/추암|Chuam/.test(blob)) preferred.push('추암');
-  if (/촛대|Candle/.test(blob)) preferred.push('촛대바위');
-  if (/일출/.test(blob)) preferred.push('일출');
-  if (/기암/.test(blob)) preferred.push('기암괴석');
-  if (/해식/.test(blob)) preferred.push('해식아치');
-  if (/지진해일/.test(blob)) preferred.push('지진해일');
-  if (/동해시/.test(blob)) preferred.push('동해시');
-  if (/출렁/.test(blob)) preferred.push('출렁다리');
-  for (const fact of facts) {
-    for (const ocr of fact.ocrText) {
-      for (const match of ocr.match(/[가-힣]{2,10}/g) || []) push(match);
-    }
+
+  for (const place of places) {
+    push(place.name, 'selectedPlaces', place.name);
   }
-  const keywords = unique([...preferred, ...words]).slice(0, 12);
-  const hashtags = unique(['#부부여행', '#여행후기', ...keywords.map((word) => `#${word}`)]).slice(0, 12);
-  return { keywords, hashtags };
+  for (const fact of facts) {
+    const landmark = (fact.landmark || '').trim();
+    if (!landmark || /^(없음|해당 없음|알 수 없음)$/.test(landmark)) continue;
+    push(landmark, 'landmark', landmark);
+  }
+
+  const courseHay = [query, ...places.map((place) => `${place.name} ${place.address}`)].join(' ');
+  if (/갈맷길/.test(courseHay)) {
+    push('갈맷길', 'course', courseHay);
+    const courseMatch = courseHay.match(/갈맷길\s*(\d+)\s*(?:-\s*\d+)?\s*코스/) || courseHay.match(/(\d+)\s*-\s*\d+\s*코스/);
+    if (courseMatch?.[1]) push(`갈맷길${courseMatch[1]}코스`, 'course', courseMatch[0]);
+  }
+
+  const regionHay = [query, ...places.map((place) => place.address || '')].join(' ');
+  if (/기장/.test(regionHay)) push('기장여행', 'region', regionHay);
+  if (/부산/.test(regionHay)) push('부산걷기여행', 'region', regionHay);
+  if (/제주/.test(regionHay)) push('제주여행', 'region', regionHay);
+  if (/강릉/.test(regionHay)) push('강릉여행', 'region', regionHay);
+  if (/대구/.test(regionHay)) push('대구여행', 'region', regionHay);
+  if (/해운대/.test(regionHay)) push('해운대', 'region', regionHay);
+
+  const hashtags = origin.map((item) => item.tag).slice(0, 12);
+  const keywords = hashtags.map((tag) => tag.replace(/^#/, ''));
+  logReviewTrace('[REVIEW-TRACE] hashtag-source', { hashtags, origin, usedOcr: false });
+  return { keywords, hashtags, origin };
+}
+
+export function reviewSeoFromFacts(
+  facts: OrderedPhotoFact[],
+  places: PlaceItem[],
+  query = ''
+): { keywords: string[]; hashtags: string[] } {
+  const seo = blogSeo(facts, places, query);
+  return { keywords: seo.keywords, hashtags: seo.hashtags };
 }
 
 function factsTableRows(facts: OrderedPhotoFact[]) {
@@ -521,9 +705,51 @@ function factsTableRows(facts: OrderedPhotoFact[]) {
   }));
 }
 
+function logFinalPromptBeforeReview(
+  prompt: string,
+  analysisJson: ReturnType<typeof compactPhotoFacts>,
+  places: PlaceItem[]
+): void {
+  const prompt5000 = prompt.slice(0, 5000);
+  const sceneDescription = analysisJson.map((item) => ({
+    order: item.order,
+    fileName: item.fileName,
+    sceneDescription: item.sceneDescription,
+    includedInPrompt: item.sceneDescription.length > 0 && prompt.includes(item.sceneDescription),
+  }));
+  const selectedPlaces = places.map((place) => ({
+    id: place.id,
+    name: place.name,
+    address: place.address,
+    photoCount: place.photos?.length ?? 0,
+  }));
+  const selectedPlaceNamesInPrompt = selectedPlaces.map((place) => ({
+    name: place.name,
+    includedInPrompt: place.name.length > 0 && prompt.includes(place.name),
+  }));
+
+  console.log('[REVIEW-TRACE] final-prompt');
+  console.log(prompt5000);
+  logReviewTrace('[REVIEW-TRACE] final-prompt-photoFacts', analysisJson);
+  logReviewTrace('[REVIEW-TRACE] final-prompt-sceneDescription', sceneDescription);
+  logReviewTrace('[REVIEW-TRACE] final-prompt-selectedPlaces', {
+    selectedPlaces,
+    selectedPlaceNamesInPrompt,
+  });
+
+  if (typeof window === 'undefined') return;
+  const w = window as Window & { __NOEUL_REVIEW_TRACE?: Record<string, unknown> };
+  w.__NOEUL_REVIEW_TRACE = {
+    ...(w.__NOEUL_REVIEW_TRACE || {}),
+    '[REVIEW-TRACE] final-prompt': prompt5000,
+  };
+}
+
 export function generateTravelBlogFromFacts(
   facts: OrderedPhotoFact[],
-  titleSeed: string
+  titleSeed: string,
+  places: PlaceItem[] = [],
+  query = ''
 ): TravelBlogDraft {
   const rows = factsTableRows(facts);
   const success = facts.filter((fact) => (fact.sceneDescription || fact.caption).trim()).length;
@@ -544,15 +770,7 @@ export function generateTravelBlogFromFacts(
       },
     };
   }
-  const title = reviewTitle(facts, titleSeed);
-  const paragraphs = buildTracedParagraphs(facts);
-  const essay = composeCoupleEssay(facts);
-  const body = essay.body;
-  console.log('[TRACE-1] review.content 생성 직후', body);
-  const usedPhotoTags = unique(paragraphs.flatMap((item) => item.usedTags));
-  const seo = blogSeo(facts);
   const analysisJson = compactPhotoFacts(facts);
-  const usedPhotoOrders = essay.usedOrders;
   const prompt = `후기는 60대 부산 부부가 실제 여행 후 네이버 블로그에 남긴 글이다.
 풍경 설명보다 경험, 감정, 대화, 걷는 과정, 느낀 점을 중심으로 쓴다.
 사진 설명을 나열하지 말고 하나의 자연스러운 이야기로 연결한다.
@@ -562,8 +780,21 @@ sceneDescription을 복사하거나 [사진N]으로 쓰지 마라.
 
 사진 분석 JSON(자료):
 ${JSON.stringify(analysisJson, null, 2)}`;
+  logFinalPromptBeforeReview(prompt, analysisJson, places);
+
+  const title = reviewTitle(facts, titleSeed);
+  const paragraphs = buildTracedParagraphs(facts);
+  const essay = composeCoupleEssay(facts);
+  const body = essay.body;
+  console.log('[TRACE-1] review.content 생성 직후', body);
+  const usedPhotoTags = unique(paragraphs.flatMap((item) => item.usedTags));
+  const seo = blogSeo(facts, places, query);
+  const usedPhotoOrders = essay.usedOrders;
 
   if (typeof window !== 'undefined') {
+    console.log('[REVIEW-TRACE] 4-final-prompt');
+    console.log(prompt.slice(0, 5000));
+    logReviewTrace('[REVIEW-TRACE] 4-final-prompt', prompt.slice(0, 5000));
     console.log('[노을-review] 후기 생성 입력 프롬프트 전문\n' + prompt);
     console.log('[노을-review] 사진 분석 JSON 전문\n' + JSON.stringify(analysisJson, null, 2));
     console.log('[노을-review] 문단별 사용 태그', paragraphs.map((item) => ({
@@ -608,7 +839,22 @@ export function generateTravelBlogEssay(input: {
   const tripName = input.title.trim() || input.query?.trim() || input.places[0]?.name || '여행';
   console.log('[facts] generateTravelBlogEssay → photoFactsFromPlaces (photoFactsFromScenes 없음)');
   console.table(factsTableRows(facts));
-  return generateTravelBlogFromFacts(facts, tripName);
+  console.log('[REVIEW-TRACE] 3-vectorDB', { invoked: false });
+  logReviewTrace(
+    '[REVIEW-TRACE] 1-photo-facts',
+    facts.map((fact) => ({
+      order: fact.order,
+      fileName: fact.fileName,
+      ocrText: fact.ocrText ?? [],
+      sceneDescription: fact.sceneDescription ?? '',
+      caption: fact.caption ?? '',
+      keywords: fact.keywords ?? [],
+      landmark: fact.landmark ?? '',
+      place: fact.place ?? '',
+      objects: fact.objects ?? [],
+    }))
+  );
+  return generateTravelBlogFromFacts(facts, tripName, input.places, input.query);
 }
 
 export function reviewJson(essay: TravelBlogDraft): {

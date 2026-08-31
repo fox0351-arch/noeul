@@ -8,6 +8,86 @@ type PendingPhoto = {
   placeMemo?: string;
 };
 
+export type VisionImageLog = {
+  id: string;
+  fileName: string | null;
+  imageUrl: string;
+  imageBase64Length: number;
+  width: number | null;
+  height: number | null;
+  matchesTripPhoto: boolean | null;
+};
+
+function dataUrlParts(dataUrl: string): { imageUrl: string; imageBase64Length: number } {
+  const comma = dataUrl.indexOf(',');
+  const data = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+  return { imageUrl: dataUrl.slice(0, Math.min(100, dataUrl.length)), imageBase64Length: data.length };
+}
+
+function readImageSize(dataUrl: string): Promise<{ width: number | null; height: number | null }> {
+  if (typeof Image === 'undefined') return Promise.resolve({ width: null, height: null });
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve({ width: null, height: null });
+    img.src = dataUrl;
+  });
+}
+
+export async function emitVisionPhotoJson(
+  photos: { id: string; dataUrl: string }[],
+  tripPhotos: { id: string; dataUrl: string }[] = []
+): Promise<void> {
+  const rows = [];
+  for (const photo of photos) {
+    const parts = dataUrlParts(photo.dataUrl);
+    const size = await readImageSize(photo.dataUrl);
+    rows.push({
+      id: photo.id,
+      imageUrl: parts.imageUrl,
+      width: size.width,
+      height: size.height,
+      imageBase64Length: parts.imageBase64Length,
+    });
+  }
+  const payload = {
+    photos: rows,
+    tripPhotosCount: tripPhotos.length,
+    tripPhotos0DataUrl100: tripPhotos[0]?.dataUrl.slice(0, 100) ?? null,
+    photos0EqualsTripPhotos0: Boolean(
+      photos[0] && tripPhotos[0] && photos[0].dataUrl === tripPhotos[0].dataUrl
+    ),
+  };
+  console.log('[REVIEW-TRACE] vision-call-photos');
+  console.log(JSON.stringify(payload, null, 2));
+  if (typeof window === 'undefined') return;
+  const w = window as Window & { __NOEUL_REVIEW_TRACE?: Record<string, unknown> };
+  w.__NOEUL_REVIEW_TRACE = { ...(w.__NOEUL_REVIEW_TRACE || {}), '[REVIEW-TRACE] vision-call-photos': payload };
+}
+
+export async function inspectVisionImages(
+  photos: { id: string; dataUrl: string }[],
+  tripPhotos?: { id: string; dataUrl: string }[]
+): Promise<VisionImageLog[]> {
+  const tripById = new Map((tripPhotos ?? []).map((photo) => [photo.id, photo.dataUrl]));
+  const rows: VisionImageLog[] = [];
+  for (const photo of photos) {
+    const parts = dataUrlParts(photo.dataUrl);
+    const size = await readImageSize(photo.dataUrl);
+    const tripDataUrl = tripById.get(photo.id);
+    rows.push({
+      id: photo.id,
+      fileName: null,
+      imageUrl: parts.imageUrl,
+      imageBase64Length: parts.imageBase64Length,
+      width: size.width,
+      height: size.height,
+      matchesTripPhoto: tripPhotos ? tripDataUrl === photo.dataUrl : null,
+    });
+  }
+  return rows;
+}
+
 export type PhotoAnalyzeStatus = {
   id: string;
   label: string;
@@ -38,6 +118,7 @@ async function requestAnalysis(photos: PendingPhoto[]): Promise<{
       `[base64-trace] photoAiClient.requestAnalysis id=${photo.id} mimeType=${mimeMatch?.[1] || 'unknown'} dataLength=${data.length} head50=${data.slice(0, 50)} tail50=${data.slice(-50)}`
     );
   });
+  console.log('[REVIEW-TRACE] vision-fetch-photos0-url100', photos[0]?.dataUrl.slice(0, 100) ?? null);
   const response = await fetch('/api/photos/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -106,7 +187,7 @@ async function requestAnalysis(photos: PendingPhoto[]): Promise<{
 
 export async function analyzePlacePhotos(
   places: PlaceItem[],
-  options?: { force?: boolean }
+  options?: { force?: boolean; tripPhotos?: { id: string; dataUrl: string }[] }
 ): Promise<PlaceItem[]> {
   const pending = places.flatMap((place) =>
     (place.photos ?? [])
@@ -125,6 +206,7 @@ export async function analyzePlacePhotos(
   );
 
   if (pending.length === 0) return places;
+  await emitVisionPhotoJson(pending, options?.tripPhotos ?? []);
   console.log('[노을] photoAi 분석 요청', { force: Boolean(options?.force), count: pending.length });
   if (typeof window !== 'undefined') {
     (window as Window & { __NOEUL_PHOTO_STATUS?: PhotoAnalyzeStatus[] }).__NOEUL_PHOTO_STATUS = [];
