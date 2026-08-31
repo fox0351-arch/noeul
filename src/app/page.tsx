@@ -43,7 +43,10 @@ function applyTripPhotos(places: PlaceItem[], checkedIds: string[], photos: Plac
 }
 
 function placesWithPhotos(places: PlaceItem[], photos: PlacePhoto[]): PlaceItem[] {
-  if (places.length === 0) return places;
+  if (places.length === 0) {
+    if (photos.length === 0) return [];
+    return [{ id: '__photos_only__', name: '', address: '', location: SEOUL, photos }];
+  }
   return places.map((place, index) => ({
     ...place,
     photos: index === 0 ? photos : [],
@@ -485,10 +488,6 @@ export default function HomePage() {
   };
 
   const handleGenerateReview = async () => {
-    if (selectedPlaces.length === 0) {
-      setMapError('갈 관광지를 먼저 골라 주세요.');
-      return;
-    }
     setMapError('');
     setReviewCopyNotice('');
     setReview(null);
