@@ -56,6 +56,16 @@ function formatPublishedReview(essay: ReturnType<typeof generateTravelBlogEssay>
   };
 }
 
+function logPhotoTrace(tag: string, patch: Record<string, unknown>) {
+  if (typeof window === 'undefined') {
+    console.log(tag, JSON.stringify(patch));
+    return;
+  }
+  const w = window as Window & { __NOEUL_PHOTO_TRACE?: Record<string, unknown> };
+  w.__NOEUL_PHOTO_TRACE = { ...(w.__NOEUL_PHOTO_TRACE || {}), ...patch };
+  console.log(tag, JSON.stringify(w.__NOEUL_PHOTO_TRACE));
+}
+
 function sortTripPhotos(photos: PlacePhoto[]): PlacePhoto[] {
   return [...photos].sort((a, b) => {
     if (a.takenAt && b.takenAt && a.takenAt !== b.takenAt) return a.takenAt.localeCompare(b.takenAt);
@@ -386,6 +396,9 @@ export default function HomePage() {
 
   const handlePhotosSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
+    const names = files ? Array.from(files).map((file) => file.name) : [];
+    console.log('[PHOTO-1] 선택된 파일 수', files?.length ?? 0, '파일명 목록', names);
+    logPhotoTrace('[PHOTO-1]', { photo1: files?.length ?? 0 });
     e.target.value = '';
     if (!files?.length) return;
     setIsPhotoBusy(true);
@@ -398,6 +411,7 @@ export default function HomePage() {
       }
       const nextPhotos = [...tripPhotos, ...added].slice(0, MAX_PHOTOS_PER_PLACE);
       setTripPhotos(nextPhotos);
+      logPhotoTrace('[PHOTO-2]', { photo2: nextPhotos.length });
       persistTrip(places, checkedIds, nextPhotos);
       setMapNotice(`사진 ${nextPhotos.length}장을 올렸습니다.`);
     } finally {
@@ -468,6 +482,7 @@ export default function HomePage() {
   };
 
   const handleGenerateReview = async () => {
+    logPhotoTrace('[PHOTO-5]', { photo5: tripPhotos.length });
     if (selectedPlaces.length === 0) {
       setMapError('갈 관광지를 먼저 골라 주세요.');
       return;
@@ -478,6 +493,7 @@ export default function HomePage() {
     setIsReviewGenerating(true);
     setIsReviewOpen(true);
     const sourcePhotos = sortTripPhotos(tripPhotos.length > 0 ? tripPhotos : collectTripPhotos(selectedPlaces));
+    logPhotoTrace('[PHOTO-6]', { photo6: sourcePhotos.length });
     const prepared = placesWithPhotos(selectedPlaces, sourcePhotos);
     const buildEssay = (essayPlaces: PlaceItem[]) =>
       generateTravelBlogEssay({
@@ -516,6 +532,7 @@ export default function HomePage() {
     }
   };
 
+  logPhotoTrace('[PHOTO-3]', { photo3: tripPhotos.length });
   return (
     <main className="flex flex-col h-dvh bg-slate-50">
       <SimQueryRedirect />
@@ -710,7 +727,10 @@ export default function HomePage() {
           <div className="mb-3">
             <button
               type="button"
-              onClick={handleGenerateReview}
+              onClick={() => {
+                logPhotoTrace('[PHOTO-4]', { photo4: tripPhotos.length });
+                void handleGenerateReview();
+              }}
               disabled={isReviewGenerating}
               className="flex flex-col items-center justify-center w-full text-2xl font-black text-white rounded-2xl min-h-[76px] h-[76px] bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300"
             >
