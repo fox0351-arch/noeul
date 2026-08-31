@@ -62,16 +62,6 @@ function formatPublishedReview(
   };
 }
 
-function logPhotoTrace(tag: string, patch: Record<string, unknown>) {
-  if (typeof window === 'undefined') {
-    console.log(tag, JSON.stringify(patch));
-    return;
-  }
-  const w = window as Window & { __NOEUL_PHOTO_TRACE?: Record<string, unknown> };
-  w.__NOEUL_PHOTO_TRACE = { ...(w.__NOEUL_PHOTO_TRACE || {}), ...patch };
-  console.log(tag, JSON.stringify(w.__NOEUL_PHOTO_TRACE));
-}
-
 function sortTripPhotos(photos: PlacePhoto[]): PlacePhoto[] {
   return [...photos].sort((a, b) => {
     if (a.takenAt && b.takenAt && a.takenAt !== b.takenAt) return a.takenAt.localeCompare(b.takenAt);
@@ -90,31 +80,6 @@ export default function HomePage() {
   const [places, setPlaces] = useState<PlaceItem[]>([]);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [tripPhotos, setTripPhotos] = useState<PlacePhoto[]>([]);
-  const [photoSelectDebug, setPhotoSelectDebug] = useState<{
-    entered: boolean;
-    files: number | null;
-    nextPhotos: number | null;
-    eTargetFiles: string;
-    eTarget: string;
-    eTargetValue: string;
-    step1Files: number | null;
-    step2NextPhotos: number | null;
-    step3BeforeSet: number | null;
-    step4AfterSet: number | null;
-    effectTripPhotos: number | null;
-  }>({
-    entered: false,
-    files: null,
-    nextPhotos: null,
-    eTargetFiles: '',
-    eTarget: '',
-    eTargetValue: '',
-    step1Files: null,
-    step2NextPhotos: null,
-    step3BeforeSet: null,
-    step4AfterSet: null,
-    effectTripPhotos: null,
-  });
   const [center, setCenter] = useState<PlaceLocation>(SEOUL);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [detailPlace, setDetailPlace] = useState<PlaceItem | null>(null);
@@ -304,13 +269,6 @@ export default function HomePage() {
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  /* eslint-disable react-hooks/set-state-in-effect -- debug: log and show tripPhotos */
-  useEffect(() => {
-    console.log(tripPhotos);
-    setPhotoSelectDebug((prev) => ({ ...prev, effectTripPhotos: tripPhotos.length }));
-  }, [tripPhotos]);
-  /* eslint-enable react-hooks/set-state-in-effect */
-
   useEffect(() => {
     const onPop = () => closeOverlays();
     const onShow = () => {
@@ -463,26 +421,6 @@ export default function HomePage() {
 
   const handlePhotosSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
-    console.log(files);
-    console.log(e.target);
-    console.log(e.target.value);
-    const debugFilesText = `length=${files.length} names=${files.map((file) => file.name).join(',')}`;
-    const debugTargetText = `tag=${e.target.tagName} type=${e.target.type} className=${e.target.className}`;
-    const debugValueText = String(e.target.value);
-    console.log('[PHOTO-ENTER]');
-    setPhotoSelectDebug((prev) => ({
-      ...prev,
-      entered: true,
-      eTargetFiles: debugFilesText,
-      eTarget: debugTargetText,
-      eTargetValue: debugValueText,
-    }));
-    console.log('[1] files', files);
-    console.log('[PHOTO-FILES]', files.length);
-    setPhotoSelectDebug((prev) => ({ ...prev, files: files.length, step1Files: files.length }));
-    const names = files.map((file) => file.name);
-    console.log('[PHOTO-1] 선택된 파일 수', files.length, '파일명 목록', names);
-    logPhotoTrace('[PHOTO-1]', { photo1: files.length });
     e.target.value = '';
     if (!files.length) return;
     setIsPhotoBusy(true);
@@ -494,14 +432,7 @@ export default function HomePage() {
         return;
       }
       const nextPhotos = [...tripPhotos, ...added].slice(0, MAX_PHOTOS_PER_PLACE);
-      console.log('[2] nextPhotos', nextPhotos);
-      setPhotoSelectDebug((prev) => ({ ...prev, nextPhotos: nextPhotos.length, step2NextPhotos: nextPhotos.length }));
-      console.log('[3] before setTripPhotos', nextPhotos);
-      setPhotoSelectDebug((prev) => ({ ...prev, step3BeforeSet: nextPhotos.length }));
       setTripPhotos(nextPhotos);
-      console.log('[4] after setTripPhotos', nextPhotos);
-      setPhotoSelectDebug((prev) => ({ ...prev, step4AfterSet: nextPhotos.length }));
-      logPhotoTrace('[PHOTO-2]', { photo2: nextPhotos.length });
       persistTrip(places, checkedIds, nextPhotos);
       setMapNotice(`사진 ${nextPhotos.length}장을 올렸습니다.`);
     } finally {
@@ -572,7 +503,6 @@ export default function HomePage() {
   };
 
   const handleGenerateReview = async () => {
-    logPhotoTrace('[PHOTO-5]', { photo5: tripPhotos.length });
     if (selectedPlaces.length === 0) {
       setMapError('갈 관광지를 먼저 골라 주세요.');
       return;
@@ -583,7 +513,6 @@ export default function HomePage() {
     setIsReviewGenerating(true);
     setIsReviewOpen(true);
     const sourcePhotos = sortTripPhotos(tripPhotos.length > 0 ? tripPhotos : collectTripPhotos(selectedPlaces));
-    logPhotoTrace('[PHOTO-6]', { photo6: sourcePhotos.length });
     console.log('[REVIEW-TRACE] 2-place-search', {
       query: currentQuery,
       keyword,
@@ -693,7 +622,6 @@ export default function HomePage() {
     }
   };
 
-  logPhotoTrace('[PHOTO-3]', { photo3: tripPhotos.length });
   return (
     <main className="flex flex-col h-dvh bg-slate-50">
       <SimQueryRedirect />
@@ -867,14 +795,6 @@ export default function HomePage() {
           >
             {isPhotoBusy ? '사진 준비 중...' : tripPhotos.length > 0 ? `사진 더 올리기 (${tripPhotos.length}장)` : '사진 올리기'}
           </button>
-          <p className="mb-1 text-base font-bold text-red-600">[TEST] 보이는 file input</p>
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={handlePhotosSelected}
-            style={{ display: 'block', opacity: 1, width: '100%', minHeight: '44px' }}
-          />
           {tripPhotos.length > 0 && (
             <div className="flex gap-2 mb-2 overflow-x-auto pb-1">
               {tripPhotos.map((photo, index) => (
@@ -893,18 +813,6 @@ export default function HomePage() {
               ))}
             </div>
           )}
-          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] tripPhotos.length = {tripPhotos.length}</p>
-          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] entered={photoSelectDebug.entered ? 'true' : 'false'}</p>
-          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] files={photoSelectDebug.files ?? ''}</p>
-          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] nextPhotos={photoSelectDebug.nextPhotos ?? ''}</p>
-          <p className="mb-2 text-base font-bold text-red-600 break-all">[DEBUG] e.target.files={photoSelectDebug.eTargetFiles}</p>
-          <p className="mb-2 text-base font-bold text-red-600 break-all">[DEBUG] e.target={photoSelectDebug.eTarget}</p>
-          <p className="mb-2 text-base font-bold text-red-600 break-all">[DEBUG] e.target.value={photoSelectDebug.eTargetValue}</p>
-          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 1 files={photoSelectDebug.step1Files ?? ''}</p>
-          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 2 nextPhotos={photoSelectDebug.step2NextPhotos ?? ''}</p>
-          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 3 beforeSet={photoSelectDebug.step3BeforeSet ?? ''}</p>
-          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 4 afterSet={photoSelectDebug.step4AfterSet ?? ''}</p>
-          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 5 effect tripPhotos={photoSelectDebug.effectTripPhotos ?? ''}</p>
           <div className="mb-3">
             <p className="mb-2 text-base font-bold text-slate-800">후기 생성 방식</p>
             <div className="grid grid-cols-2 gap-2 mb-3">
@@ -942,7 +850,6 @@ export default function HomePage() {
             <button
               type="button"
               onClick={() => {
-                logPhotoTrace('[PHOTO-4]', { photo4: tripPhotos.length });
                 void handleGenerateReview();
               }}
               disabled={isReviewGenerating}

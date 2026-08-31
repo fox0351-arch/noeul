@@ -504,7 +504,7 @@ function clipEssay(body: string, max: number): string {
     const mid = Math.max(1, parts.length - 2);
     parts.splice(mid, 1);
   }
-  let text = parts.join('\n\n');
+  const text = parts.join('\n\n');
   if (text.length <= max) return text;
   const sliced = text.slice(0, max);
   const idx = Math.max(sliced.lastIndexOf('다.'), sliced.lastIndexOf('요.'));
