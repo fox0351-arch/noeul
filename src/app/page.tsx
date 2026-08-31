@@ -84,6 +84,11 @@ export default function HomePage() {
   const [places, setPlaces] = useState<PlaceItem[]>([]);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [tripPhotos, setTripPhotos] = useState<PlacePhoto[]>([]);
+  const [photoSelectDebug, setPhotoSelectDebug] = useState<{
+    entered: boolean;
+    files: number | null;
+    nextPhotos: number | null;
+  }>({ entered: false, files: null, nextPhotos: null });
   const [center, setCenter] = useState<PlaceLocation>(SEOUL);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [detailPlace, setDetailPlace] = useState<PlaceItem | null>(null);
@@ -412,7 +417,11 @@ export default function HomePage() {
   };
 
   const handlePhotosSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    console.log('[PHOTO-ENTER]');
+    setPhotoSelectDebug((prev) => ({ ...prev, entered: true }));
     const files = e.target.files;
+    console.log('[PHOTO-FILES]', files?.length);
+    setPhotoSelectDebug((prev) => ({ ...prev, files: files?.length ?? 0 }));
     const names = files ? Array.from(files).map((file) => file.name) : [];
     console.log('[PHOTO-1] 선택된 파일 수', files?.length ?? 0, '파일명 목록', names);
     logPhotoTrace('[PHOTO-1]', { photo1: files?.length ?? 0 });
@@ -427,6 +436,8 @@ export default function HomePage() {
         return;
       }
       const nextPhotos = [...tripPhotos, ...added].slice(0, MAX_PHOTOS_PER_PLACE);
+      console.log('[PHOTO-SET]', nextPhotos.length);
+      setPhotoSelectDebug((prev) => ({ ...prev, nextPhotos: nextPhotos.length }));
       setTripPhotos(nextPhotos);
       logPhotoTrace('[PHOTO-2]', { photo2: nextPhotos.length });
       persistTrip(places, checkedIds, nextPhotos);
@@ -742,6 +753,9 @@ export default function HomePage() {
             </div>
           )}
           <p className="mb-2 text-base font-bold text-red-600">[DEBUG] tripPhotos.length = {tripPhotos.length}</p>
+          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] entered={photoSelectDebug.entered ? 'true' : 'false'}</p>
+          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] files={photoSelectDebug.files ?? ''}</p>
+          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] nextPhotos={photoSelectDebug.nextPhotos ?? ''}</p>
           <div className="mb-3">
             <button
               type="button"
