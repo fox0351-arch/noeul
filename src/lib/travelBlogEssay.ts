@@ -548,6 +548,7 @@ export function generateTravelBlogFromFacts(
   const paragraphs = buildTracedParagraphs(facts);
   const essay = composeCoupleEssay(facts);
   const body = essay.body;
+  console.log('[TRACE-1] review.content 생성 직후', body);
   const usedPhotoTags = unique(paragraphs.flatMap((item) => item.usedTags));
   const seo = blogSeo(facts);
   const analysisJson = compactPhotoFacts(facts);
