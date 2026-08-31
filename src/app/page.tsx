@@ -724,9 +724,6 @@ export default function HomePage() {
             {isPhotoBusy ? '사진 준비 중...' : tripPhotos.length > 0 ? `사진 더 올리기 (${tripPhotos.length}장)` : '사진 올리기'}
           </button>
           {tripPhotos.length > 0 && (
-            <p className="mb-2 text-[11px] leading-none text-slate-500">사진 {tripPhotos.length}장 업로드됨</p>
-          )}
-          {tripPhotos.length > 0 && (
             <div className="flex gap-2 mb-2 overflow-x-auto pb-1">
               {tripPhotos.map((photo, index) => (
                 <div key={photo.id} className="relative shrink-0">
@@ -744,6 +741,7 @@ export default function HomePage() {
               ))}
             </div>
           )}
+          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] tripPhotos.length = {tripPhotos.length}</p>
           <div className="mb-3">
             <button
               type="button"
