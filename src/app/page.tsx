@@ -91,7 +91,24 @@ export default function HomePage() {
     eTargetFiles: string;
     eTarget: string;
     eTargetValue: string;
-  }>({ entered: false, files: null, nextPhotos: null, eTargetFiles: '', eTarget: '', eTargetValue: '' });
+    step1Files: number | null;
+    step2NextPhotos: number | null;
+    step3BeforeSet: number | null;
+    step4AfterSet: number | null;
+    effectTripPhotos: number | null;
+  }>({
+    entered: false,
+    files: null,
+    nextPhotos: null,
+    eTargetFiles: '',
+    eTarget: '',
+    eTargetValue: '',
+    step1Files: null,
+    step2NextPhotos: null,
+    step3BeforeSet: null,
+    step4AfterSet: null,
+    effectTripPhotos: null,
+  });
   const [center, setCenter] = useState<PlaceLocation>(SEOUL);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [detailPlace, setDetailPlace] = useState<PlaceItem | null>(null);
@@ -269,6 +286,13 @@ export default function HomePage() {
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  /* eslint-disable react-hooks/set-state-in-effect -- debug: log and show tripPhotos */
+  useEffect(() => {
+    console.log(tripPhotos);
+    setPhotoSelectDebug((prev) => ({ ...prev, effectTripPhotos: tripPhotos.length }));
+  }, [tripPhotos]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   useEffect(() => {
     const onPop = () => closeOverlays();
     const onShow = () => {
@@ -441,8 +465,9 @@ export default function HomePage() {
       eTargetValue: debugValueText,
     }));
     const files = e.target.files;
+    console.log('[1] files', files);
     console.log('[PHOTO-FILES]', files?.length);
-    setPhotoSelectDebug((prev) => ({ ...prev, files: files?.length ?? 0 }));
+    setPhotoSelectDebug((prev) => ({ ...prev, files: files?.length ?? 0, step1Files: files?.length ?? 0 }));
     const names = files ? Array.from(files).map((file) => file.name) : [];
     console.log('[PHOTO-1] 선택된 파일 수', files?.length ?? 0, '파일명 목록', names);
     logPhotoTrace('[PHOTO-1]', { photo1: files?.length ?? 0 });
@@ -457,9 +482,13 @@ export default function HomePage() {
         return;
       }
       const nextPhotos = [...tripPhotos, ...added].slice(0, MAX_PHOTOS_PER_PLACE);
-      console.log('[PHOTO-SET]', nextPhotos.length);
-      setPhotoSelectDebug((prev) => ({ ...prev, nextPhotos: nextPhotos.length }));
+      console.log('[2] nextPhotos', nextPhotos);
+      setPhotoSelectDebug((prev) => ({ ...prev, nextPhotos: nextPhotos.length, step2NextPhotos: nextPhotos.length }));
+      console.log('[3] before setTripPhotos', nextPhotos);
+      setPhotoSelectDebug((prev) => ({ ...prev, step3BeforeSet: nextPhotos.length }));
       setTripPhotos(nextPhotos);
+      console.log('[4] after setTripPhotos', nextPhotos);
+      setPhotoSelectDebug((prev) => ({ ...prev, step4AfterSet: nextPhotos.length }));
       logPhotoTrace('[PHOTO-2]', { photo2: nextPhotos.length });
       persistTrip(places, checkedIds, nextPhotos);
       setMapNotice(`사진 ${nextPhotos.length}장을 올렸습니다.`);
@@ -788,6 +817,11 @@ export default function HomePage() {
           <p className="mb-2 text-base font-bold text-red-600 break-all">[DEBUG] e.target.files={photoSelectDebug.eTargetFiles}</p>
           <p className="mb-2 text-base font-bold text-red-600 break-all">[DEBUG] e.target={photoSelectDebug.eTarget}</p>
           <p className="mb-2 text-base font-bold text-red-600 break-all">[DEBUG] e.target.value={photoSelectDebug.eTargetValue}</p>
+          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 1 files={photoSelectDebug.step1Files ?? ''}</p>
+          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 2 nextPhotos={photoSelectDebug.step2NextPhotos ?? ''}</p>
+          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 3 beforeSet={photoSelectDebug.step3BeforeSet ?? ''}</p>
+          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 4 afterSet={photoSelectDebug.step4AfterSet ?? ''}</p>
+          <p className="mb-2 text-base font-bold text-red-600">[DEBUG] 5 effect tripPhotos={photoSelectDebug.effectTripPhotos ?? ''}</p>
           <div className="mb-3">
             <button
               type="button"
