@@ -374,6 +374,23 @@ export default function HomePage() {
     MapManager.getInstance().fitPlacesBounds(places);
   };
 
+  const handleLocateMe = () => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+          MapManager.getInstance().showMyLocation(lat, lng);
+        },
+        () => {},
+      );
+    } catch {
+      /* 권한 거부/실패 시 조용히 무시 */
+    }
+  };
+
   const handleMovePlace = (index: number, offset: -1 | 1) => {
     const target = index + offset;
     if (target < 0 || target >= places.length) return;
@@ -707,6 +724,9 @@ export default function HomePage() {
             {isPhotoBusy ? '사진 준비 중...' : tripPhotos.length > 0 ? `사진 더 올리기 (${tripPhotos.length}장)` : '사진 올리기'}
           </button>
           {tripPhotos.length > 0 && (
+            <p className="mb-2 text-[11px] leading-none text-slate-500">사진 {tripPhotos.length}장 업로드됨</p>
+          )}
+          {tripPhotos.length > 0 && (
             <div className="flex gap-2 mb-2 overflow-x-auto pb-1">
               {tripPhotos.map((photo, index) => (
                 <div key={photo.id} className="relative shrink-0">
@@ -795,6 +815,15 @@ export default function HomePage() {
             className="noeul-fit-bounds"
           >
             지도 전체 보기
+          </button>
+          <button
+            type="button"
+            onClick={handleLocateMe}
+            className="noeul-my-location"
+            aria-label="내 위치 보기"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/icon-my-location.jpg" alt="" width={20} height={20} draggable={false} />
           </button>
         </div>
       </div>

@@ -61,6 +61,31 @@ body {
   opacity: 0.45;
 }
 
+.noeul-my-location {
+  position: absolute;
+  z-index: 20;
+  top: 80px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 9999px;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.16);
+  cursor: pointer;
+}
+
+.noeul-my-location img {
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  pointer-events: none;
+}
+
 .workspace {
   display: flex;
   flex: 1;

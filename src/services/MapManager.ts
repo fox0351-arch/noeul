@@ -121,6 +121,7 @@ export class MapManager {
   private trackPath: google.maps.LatLngLiteral[] = [];
   private placeMarkers: google.maps.Marker[] = [];
   private userMarker: google.maps.Marker | null = null;
+  private myLocationMarker: google.maps.Marker | null = null;
   private returnMarker: google.maps.Marker | null = null;
   private returnHalo: google.maps.Circle | null = null;
   private returnPulseTimer: number | null = null;
@@ -204,6 +205,35 @@ export class MapManager {
     map.setZoom(zoom);
   }
 
+  /** 홈 지도 「내 위치」: 중심 이동 + 작은 붉은 점. 장소 마커 로직은 건드리지 않습니다. */
+  showMyLocation(lat: number, lng: number): void {
+    this.setMapCenter(lat, lng, 16);
+    const map = this.map;
+    if (!map || !window.google) return;
+    const position = { lat, lng };
+    const icon: google.maps.Symbol = {
+      path: google.maps.SymbolPath.CIRCLE,
+      scale: 5,
+      fillColor: '#DC2626',
+      fillOpacity: 1,
+      strokeColor: '#FFFFFF',
+      strokeWeight: 1.5,
+    };
+    if (!this.myLocationMarker) {
+      this.myLocationMarker = new google.maps.Marker({
+        position,
+        map,
+        clickable: false,
+        zIndex: 12,
+        icon,
+      });
+      return;
+    }
+    this.myLocationMarker.setPosition(position);
+    this.myLocationMarker.setMap(map);
+    this.myLocationMarker.setIcon(icon);
+  }
+
   async attach(container: HTMLElement, initialCenter: PlaceLocation): Promise<void> {
     this.detach();
     setOptions({
@@ -274,9 +304,11 @@ export class MapManager {
     this.routeLine?.setMap(null);
     this.trackLine?.setMap(null);
     this.userMarker?.setMap(null);
+    this.myLocationMarker?.setMap(null);
     this.routeLine = null;
     this.trackLine = null;
     this.userMarker = null;
+    this.myLocationMarker = null;
     this.trackPath = [];
     this.map = null;
   }
