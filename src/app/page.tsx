@@ -88,7 +88,10 @@ export default function HomePage() {
     entered: boolean;
     files: number | null;
     nextPhotos: number | null;
-  }>({ entered: false, files: null, nextPhotos: null });
+    eTargetFiles: string;
+    eTarget: string;
+    eTargetValue: string;
+  }>({ entered: false, files: null, nextPhotos: null, eTargetFiles: '', eTarget: '', eTargetValue: '' });
   const [center, setCenter] = useState<PlaceLocation>(SEOUL);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [detailPlace, setDetailPlace] = useState<PlaceItem | null>(null);
@@ -417,8 +420,26 @@ export default function HomePage() {
   };
 
   const handlePhotosSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    console.log(e.target.files);
+    console.log(e.target);
+    console.log(e.target.value);
+    const debugFiles = e.target.files;
+    const debugFilesText =
+      debugFiles == null
+        ? String(debugFiles)
+        : `length=${debugFiles.length} names=${Array.from(debugFiles)
+            .map((file) => file.name)
+            .join(',')}`;
+    const debugTargetText = `tag=${e.target.tagName} type=${e.target.type} className=${e.target.className}`;
+    const debugValueText = String(e.target.value);
     console.log('[PHOTO-ENTER]');
-    setPhotoSelectDebug((prev) => ({ ...prev, entered: true }));
+    setPhotoSelectDebug((prev) => ({
+      ...prev,
+      entered: true,
+      eTargetFiles: debugFilesText,
+      eTarget: debugTargetText,
+      eTargetValue: debugValueText,
+    }));
     const files = e.target.files;
     console.log('[PHOTO-FILES]', files?.length);
     setPhotoSelectDebug((prev) => ({ ...prev, files: files?.length ?? 0 }));
@@ -764,6 +785,9 @@ export default function HomePage() {
           <p className="mb-2 text-base font-bold text-red-600">[DEBUG] entered={photoSelectDebug.entered ? 'true' : 'false'}</p>
           <p className="mb-2 text-base font-bold text-red-600">[DEBUG] files={photoSelectDebug.files ?? ''}</p>
           <p className="mb-2 text-base font-bold text-red-600">[DEBUG] nextPhotos={photoSelectDebug.nextPhotos ?? ''}</p>
+          <p className="mb-2 text-base font-bold text-red-600 break-all">[DEBUG] e.target.files={photoSelectDebug.eTargetFiles}</p>
+          <p className="mb-2 text-base font-bold text-red-600 break-all">[DEBUG] e.target={photoSelectDebug.eTarget}</p>
+          <p className="mb-2 text-base font-bold text-red-600 break-all">[DEBUG] e.target.value={photoSelectDebug.eTargetValue}</p>
           <div className="mb-3">
             <button
               type="button"
